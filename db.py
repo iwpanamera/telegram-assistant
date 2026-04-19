@@ -92,8 +92,8 @@ def history_get(limit: int = 20) -> list[dict]:
     cur.execute(
         """
         SELECT role, content, ts FROM (
-            SELECT role, content, ts FROM history ORDER BY id DESC LIMIT ?
-        ) ORDER BY rowid ASC
+            SELECT id, role, content, ts FROM history ORDER BY id DESC LIMIT ?
+        ) ORDER BY id ASC
         """,
         (limit,),
     )
