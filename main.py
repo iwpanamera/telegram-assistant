@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import tempfile
+import asyncio
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -113,11 +114,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_text:
         return
 
-    await context.bot.send_chat_action(
-        chat_id=update.effective_chat.id, action=ChatAction.TYPING
-    )
+    # Показываем "печатает" пока ждём ответа от Claude
+    async def keep_typing():
+        while True:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id, action=ChatAction.TYPING
+            )
+            await asyncio.sleep(4)
 
-    raw_answer = think(user_text)
+    typing_task = asyncio.create_task(keep_typing())
+    try:
+        raw_answer = await asyncio.to_thread(think, user_text)
+    finally:
+        typing_task.cancel()
+
     clean_text, commands = parse_commands_from_response(raw_answer)
 
     # Выполняем команды (добавление / закрытие задач)
@@ -171,11 +181,19 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"_{user_text}_", parse_mode=ParseMode.MARKDOWN)
 
     # Дальше — та же логика, что и handle_text
-    await context.bot.send_chat_action(
-        chat_id=update.effective_chat.id, action=ChatAction.TYPING
-    )
+    async def keep_typing_voice():
+        while True:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id, action=ChatAction.TYPING
+            )
+            await asyncio.sleep(4)
 
-    raw_answer = think(user_text)
+    typing_task2 = asyncio.create_task(keep_typing_voice())
+    try:
+        raw_answer = await asyncio.to_thread(think, user_text)
+    finally:
+        typing_task2.cancel()
+
     clean_text, commands = parse_commands_from_response(raw_answer)
 
     cmd_result = ""
