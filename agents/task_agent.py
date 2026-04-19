@@ -1,6 +1,27 @@
 import json
 import re
+from datetime import datetime
 from db import task_add, task_done, tasks_open
+
+_MONTHS = [
+    "", "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря"
+]
+
+def _fmt_due(due: str) -> str:
+    """Превращает '2026-04-19T20:00' в '19 апреля в 20:00'."""
+    if not due:
+        return ""
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(due, fmt)
+            month = _MONTHS[dt.month]
+            if fmt == "%Y-%m-%d":
+                return f"{dt.day} {month}"
+            return f"{dt.day} {month} в {dt.strftime('%H:%M')}"
+        except ValueError:
+            continue
+    return due  # если формат неизвестный — вернуть как есть
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +48,7 @@ def format_tasks_for_prompt() -> str:
 
     lines = []
     for t in tasks:
-        due_part = f" (до {t['due']})" if t.get("due") else ""
+        due_part = f" (до {_fmt_due(t['due'])})" if t.get("due") else ""
         lines.append(f"  [{t['id']}] {t['text']}{due_part}")
     return "Открытые задачи:\n" + "\n".join(lines)
 
@@ -46,7 +67,7 @@ def format_tasks_for_user() -> str:
 
     lines = ["*Открытые задачи:*"]
     for t in tasks:
-        due_part = f" _(до {t['due']})_" if t.get("due") else ""
+        due_part = f" _(до {_fmt_due(t['due'])})_" if t.get("due") else ""
         lines.append(f"• `[{t['id']}]` {t['text']}{due_part}")
     return "\n".join(lines)
 
@@ -74,7 +95,7 @@ def execute_commands(commands: list[dict]) -> str:
             due = cmd.get("due") or None
             if text:
                 new_id = task_add(text, due)
-                due_note = f" (до {due})" if due else ""
+                due_note = f" (до {_fmt_due(due)})" if due else ""
                 results.append(f"➕ Задача добавлена [{new_id}]: {text}{due_note}")
         elif action == "done_task":
             task_id = cmd.get("id")
