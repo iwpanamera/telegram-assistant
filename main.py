@@ -180,9 +180,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except OSError:
             pass
 
-    # Показываем расшифровку
-    await update.message.reply_text(f"_{user_text}_", parse_mode=ParseMode.MARKDOWN)
-
     # Дальше — та же логика, что и handle_text
     async def keep_typing_voice():
         while True:
