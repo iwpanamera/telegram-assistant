@@ -1,5 +1,5 @@
 python-telegram-bot==21.6
-groq==0.11.0
+groq>=0.13.0
 anthropic>=0.40.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
