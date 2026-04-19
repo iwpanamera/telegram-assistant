@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime
 from db import task_add, task_done, tasks_open
+from agents.memory_loop import update_memory
 
 _MONTHS = [
     "", "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -105,8 +106,14 @@ def execute_commands(commands: list[dict]) -> str:
                     results.append(f"✅ Задача [{task_id}] закрыта.")
                 else:
                     results.append(f"⚠️ Задача [{task_id}] не найдена или уже закрыта.")
+        elif action == "update_memory":
+            section = cmd.get("section", "").strip()
+            content = cmd.get("content", "").strip()
+            if section and content:
+                update_memory(section, content)
+                # обновление памяти — тихое, без уведомления пользователя
         else:
-            results.append(f"⚠️ Неизвестная команда: {action}")
+            pass  # неизвестные команды игнорируем тихо
 
     return "\n".join(results)
 
@@ -124,37 +131,34 @@ def close(task_id: int) -> bool:
 # Парсинг JSON-команд из ответа Claude
 # ---------------------------------------------------------------------------
 
+# Ищем JSON-массивы с action в любом месте ответа
 _CMD_PATTERN = re.compile(
-    r"\n?\s*(\[(?:\{.*?\}(?:,\s*)?)+\])\s*$",
+    r"\n?\s*(\[(?:\{[^}]*\"action\"[^}]*\}(?:,\s*\{[^}]*\"action\"[^}]*\})*)\])\s*\n?",
     re.DOTALL,
 )
 
 
 def parse_commands_from_response(answer: str) -> tuple[str, list[dict]]:
     """
-    Извлечь JSON-команды из конца ответа Claude.
-
-    Claude добавляет команды в конец ответа на отдельной строке в виде
-    JSON-массива, например:
-        [{"action":"add_task","text":"Купить молоко","due":"2024-12-01"}]
-
-    Returns:
-        (чистый_текст, список_команд)
-        Если команд нет — список пустой.
+    Извлечь JSON-команды из ответа Claude (в любом месте, не только в конце).
+    Команды убираются из текста перед отправкой пользователю.
     """
-    match = _CMD_PATTERN.search(answer)
-    if not match:
-        return answer.strip(), []
+    all_commands = []
+    clean_text = answer
 
-    raw_json = match.group(1)
-    clean_text = answer[: match.start()].strip()
+    for match in _CMD_PATTERN.finditer(answer):
+        raw_json = match.group(1)
+        try:
+            cmds = json.loads(raw_json)
+            if not isinstance(cmds, list):
+                cmds = [cmds]
+            # берём только объекты с полем action
+            cmds = [c for c in cmds if isinstance(c, dict) and "action" in c]
+            all_commands.extend(cmds)
+        except json.JSONDecodeError:
+            pass
 
-    try:
-        commands = json.loads(raw_json)
-        if not isinstance(commands, list):
-            commands = [commands]
-    except json.JSONDecodeError:
-        # Если не удалось распарсить — возвращаем весь текст без изменений
-        return answer.strip(), []
+    # убираем все найденные JSON-блоки из текста
+    clean_text = _CMD_PATTERN.sub("", answer).strip()
 
-    return clean_text, commands
+    return clean_text, all_commands

@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from agents.memory_agent import remember, recall
 from agents.task_agent import format_tasks_for_prompt
+from agents.memory_loop import read_memory, read_context
 
 load_dotenv()
 
@@ -15,11 +16,15 @@ _SYSTEM_TEMPLATE = """Ты — личный ИИ-ассистент пользо
 Ты помогаешь планировать дела, отвечаешь на вопросы, ведёшь задачи.
 Пользователь может писать и говорить на русском, украинском или английском — отвечай на том же языке, на котором написано сообщение.
 
+## Контекст о пользователе
+{context_block}
+
+## Что ты уже знаешь (память)
+{memory_block}
+
 {tasks_block}
 
-## Управление задачами
-Если пользователь просит добавить задачу — в КОНЦЕ своего ответа (на отдельной строке)
-добавь JSON-массив с командой. Примеры:
+## Команды (выполняй в КОНЦЕ ответа, на отдельной строке, невидимо для пользователя)
 
 Добавить задачу:
 [{{"action":"add_task","text":"Купить молоко","due":"2024-12-01"}}]
@@ -27,10 +32,13 @@ _SYSTEM_TEMPLATE = """Ты — личный ИИ-ассистент пользо
 Закрыть задачу:
 [{{"action":"done_task","id":3}}]
 
-Несколько команд сразу:
-[{{"action":"add_task","text":"Позвонить врачу","due":null}},{{"action":"done_task","id":1}}]
+Обновить память (когда узнал что-то новое о пользователе, его стиле, предпочтениях):
+[{{"action":"update_memory","section":"Voice","content":"Пользователь предпочитает короткие ответы"}}]
 
-Если никаких действий с задачами не нужно — не добавляй JSON в ответ.
+Секции памяти: Voice, Process, People, Projects, Output, Tools
+
+Несколько команд сразу можно комбинировать в одном массиве.
+Если никаких действий не нужно — не добавляй JSON в ответ.
 
 ## Текущие дата и время
 {datetime_now}
@@ -40,7 +48,14 @@ _SYSTEM_TEMPLATE = """Ты — личный ИИ-ассистент пользо
 def _build_system_prompt() -> str:
     tasks_block = format_tasks_for_prompt()
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    return _SYSTEM_TEMPLATE.format(tasks_block=tasks_block, datetime_now=now)
+    memory = read_memory() or "(пока пусто)"
+    context = read_context() or "(не заполнено)"
+    return _SYSTEM_TEMPLATE.format(
+        tasks_block=tasks_block,
+        datetime_now=now,
+        memory_block=memory,
+        context_block=context,
+    )
 
 
 def think(user_text: str) -> str:
