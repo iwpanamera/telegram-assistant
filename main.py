@@ -125,23 +125,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     typing_task = asyncio.create_task(keep_typing())
     try:
         raw_answer = await asyncio.to_thread(think, user_text)
+    except Exception as e:
+        typing_task.cancel()
+        logger.error("think() error: %s", e, exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+        return
     finally:
         typing_task.cancel()
 
-    clean_text, commands = parse_commands_from_response(raw_answer)
-
-    # Выполняем команды (добавление / закрытие задач)
-    cmd_result = ""
-    if commands:
-        cmd_result = execute_commands(commands)
-
-    # Отвечаем пользователю
-    reply = clean_text or "…"
-    await update.message.reply_text(reply)
-
-    # Если были изменения задач — показываем результат отдельным сообщением
-    if cmd_result:
-        await update.message.reply_text(cmd_result)
+    try:
+        clean_text, commands = parse_commands_from_response(raw_answer)
+        cmd_result = ""
+        if commands:
+            cmd_result = execute_commands(commands)
+        reply = clean_text or "…"
+        await update.message.reply_text(reply)
+        if cmd_result:
+            await update.message.reply_text(cmd_result)
+    except Exception as e:
+        logger.error("reply error: %s", e, exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка при отправке ответа: {e}")
 
 
 # ---------------------------------------------------------------------------
