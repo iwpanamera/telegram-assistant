@@ -63,16 +63,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await update.message.reply_text(
-        "👋 Привет\\! Я твой личный ИИ-ассистент\\.\n\n"
-        "Что умею:\n"
-        "• Отвечать на любые вопросы и вести диалог\n"
-        "• Вести список задач — просто скажи что нужно сделать\n"
-        "• Распознавать голосовые сообщения 🎙\n\n"
-        "Команды:\n"
-        "/tasks — показать открытые задачи\n"
-        "/done <id> — закрыть задачу\n"
-        "/start — это сообщение",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        "Привіт! Я твій особистий ІІ-асистент.\n\n"
+        "Що вмію:\n"
+        "- Відповідати на запитання і вести діалог\n"
+        "- Вести задачі і події — просто скажи що треба зробити або куди йдеш\n"
+        "- Розпізнавати голосові повідомлення\n\n"
+        "Команди:\n"
+        "/tasks — показати відкриті задачі і події\n"
+        "/done <id> — закрити задачу\n"
+        "/start — це повідомлення"
     )
 
 
@@ -84,7 +83,7 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     text = format_tasks_for_user()
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(text)
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +100,10 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task_id = int(args[0])
     ok = close(task_id)
     if ok:
-        await update.message.reply_text(f"✅ Задача [{task_id}] закрыта.")
+        await update.message.reply_text(f"Задача [{task_id}] — [виконано].")
     else:
         await update.message.reply_text(
-            f"⚠️ Задача [{task_id}] не найдена или уже закрыта."
+            f"Задача [{task_id}] не знайдена або вже закрита."
         )
 
 
@@ -134,7 +133,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         typing_task.cancel()
         logger.error("think() error: %s", e, exc_info=True)
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"Помилка: {e}")
         return
     finally:
         typing_task.cancel()
@@ -150,7 +149,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(cmd_result)
     except Exception as e:
         logger.error("reply error: %s", e, exc_info=True)
-        await update.message.reply_text(f"❌ Ошибка при отправке ответа: {e}")
+        await update.message.reply_text(f"Помилка при відправці відповіді: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +165,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Оптимизация: не транскрибируем очень короткие сообщения (< 2 сек)
     if not should_transcribe_voice(duration):
-        await update.message.reply_text("🎤 Сообщение слишком короткое, не удалось распознать.")
+        await update.message.reply_text("Повідомлення занадто коротке, не вдалося розпізнати.")
         return
 
     await context.bot.send_chat_action(
@@ -191,7 +190,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error("Transcription error: %s", e)
-        await update.message.reply_text("❌ Не удалось распознать голосовое сообщение.")
+        await update.message.reply_text("Не вдалося розпізнати голосове повідомлення.")
         return
     finally:
         try:

@@ -11,21 +11,26 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
-            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            text     TEXT NOT NULL,
-            done     INTEGER NOT NULL DEFAULT 0,
-            created  TEXT NOT NULL,
-            due      TEXT,
-            priority TEXT NOT NULL DEFAULT 'other',
-            category TEXT NOT NULL DEFAULT 'other'
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            text         TEXT NOT NULL,
+            done         INTEGER NOT NULL DEFAULT 0,
+            created      TEXT NOT NULL,
+            due          TEXT,
+            priority     TEXT NOT NULL DEFAULT 'other',
+            category     TEXT NOT NULL DEFAULT 'other',
+            type         TEXT NOT NULL DEFAULT 'task',
+            asked_review INTEGER NOT NULL DEFAULT 0
         )
     """)
 
     # Міграція: додати колонки якщо їх ще немає
-    for col_def in [
+    migrations = [
         "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'other'",
         "ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'other'",
-    ]:
+        "ALTER TABLE tasks ADD COLUMN type TEXT NOT NULL DEFAULT 'task'",
+        "ALTER TABLE tasks ADD COLUMN asked_review INTEGER NOT NULL DEFAULT 0",
+    ]
+    for col_def in migrations:
         try:
             cur.execute(col_def)
             conn.commit()
@@ -45,20 +50,29 @@ def init_db():
     conn.close()
 
 
-def task_add(text: str, due: str | None = None, priority: str = "other", category: str = "other") -> int:
-    """Додати задачу. Повертає ID нової задачі."""
+def task_add(
+    text: str,
+    due: str | None = None,
+    priority: str = "other",
+    category: str = "other",
+    type: str = "task",
+) -> int:
+    """Додати задачу або подію. Повертає ID нового запису."""
     valid_priorities = {"goal", "habit", "routine", "other"}
     valid_categories = {"work", "family", "church", "health", "finance", "learning", "home", "other"}
+    valid_types = {"task", "event"}
     if priority not in valid_priorities:
         priority = "other"
     if category not in valid_categories:
         category = "other"
+    if type not in valid_types:
+        type = "task"
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     now = datetime.now().isoformat(timespec="seconds")
     cur.execute(
-        "INSERT INTO tasks (text, done, created, due, priority, category) VALUES (?, 0, ?, ?, ?, ?)",
-        (text, now, due, priority, category),
+        "INSERT INTO tasks (text, done, created, due, priority, category, type, asked_review) VALUES (?, 0, ?, ?, ?, ?, ?, 0)",
+        (text, now, due, priority, category, type),
     )
     task_id = cur.lastrowid
     conn.commit()
@@ -67,7 +81,7 @@ def task_add(text: str, due: str | None = None, priority: str = "other", categor
 
 
 def task_done(task_id: int) -> bool:
-    """Отметить задачу выполненной. Возвращает True если задача найдена."""
+    """Отметить задачу/подію виконаною. Повертає True якщо знайдено."""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("UPDATE tasks SET done = 1 WHERE id = ? AND done = 0", (task_id,))
@@ -78,16 +92,51 @@ def task_done(task_id: int) -> bool:
 
 
 def tasks_open() -> list[dict]:
-    """Вернуть список открытых задач."""
+    """Вернуть список открытых задач и событий."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, text, created, due, priority, category FROM tasks WHERE done = 0 ORDER BY id"
+        "SELECT id, text, created, due, priority, category, type FROM tasks WHERE done = 0 ORDER BY id"
     )
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+def events_past_unreviewed() -> list[dict]:
+    """
+    Повернути події, що вже минули і по яких ще не питали 'як пройшло?'.
+    Тобто: type='event', done=0, due < now, asked_review=0.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    now = datetime.now().isoformat(timespec="seconds")
+    cur.execute(
+        """
+        SELECT id, text, due FROM tasks
+        WHERE type = 'event'
+          AND done = 0
+          AND due IS NOT NULL
+          AND due < ?
+          AND asked_review = 0
+        ORDER BY due ASC
+        """,
+        (now,),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def event_mark_reviewed(event_id: int):
+    """Позначити що по події вже питали 'як пройшло?'."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("UPDATE tasks SET asked_review = 1 WHERE id = ?", (event_id,))
+    conn.commit()
+    conn.close()
 
 
 def history_save(role: str, content: str):
