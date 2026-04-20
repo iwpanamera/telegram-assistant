@@ -42,7 +42,7 @@ def init_db():
 
 def task_add(text: str, due: str | None = None, priority: str = "other") -> int:
     """Добавить задачу. Возвращает ID новой задачи."""
-    valid_priorities = {"goal", "routine", "other"}
+    valid_priorities = {"goal", "habit", "routine", "other"}
     if priority not in valid_priorities:
         priority = "other"
     conn = sqlite3.connect(DB_PATH)

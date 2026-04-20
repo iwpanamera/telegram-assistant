@@ -63,15 +63,17 @@ def get_tasks(use_cache: bool = True) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _PRIORITY_LABEL = {
-    "goal":    "[ЦЕЛЬ]",
-    "routine": "[РУТИНА]",
-    "other":   "[ПРОЧЕЕ]",
+    "goal":    "[ЦІЛЬ А]",
+    "habit":   "[ЗВИЧКА В]",
+    "routine": "[РУТИНА Б]",
+    "other":   "[ІНШЕ Г]",
 }
 
 _PRIORITY_ICON = {
-    "goal":    "🎯",
-    "routine": "🔄",
-    "other":   "📌",
+    "goal":    "🔴",
+    "habit":   "🟢",
+    "routine": "🟡",
+    "other":   "⚪",
 }
 
 
@@ -105,20 +107,24 @@ def format_tasks_for_user() -> str:
     if not tasks:
         return "✅ Открытых задач нет."
 
-    # Группируем по приоритету: сначала цели, потом рутина, потом прочее
-    groups = {"goal": [], "routine": [], "other": []}
+    # Групуємо за пріоритетом: А → В → Б → Г
+    groups = {"goal": [], "habit": [], "routine": [], "other": []}
     for t in tasks:
         p = t.get("priority", "other")
         groups.get(p, groups["other"]).append(t)
 
-    lines = ["*Открытые задачи:*"]
-    for priority_key in ("goal", "routine", "other"):
+    lines = ["*Відкриті задачі:*"]
+    order = [
+        ("goal",    "🔴 Цілі (А)"),
+        ("habit",   "🟢 Звички (В)"),
+        ("routine", "🟡 Рутина (Б)"),
+        ("other",   "⚪ Інше (Г)"),
+    ]
+    for priority_key, label in order:
         group = groups[priority_key]
         if not group:
             continue
-        icon = _PRIORITY_ICON[priority_key]
-        label = {"goal": "Цели", "routine": "Рутина", "other": "Прочее"}[priority_key]
-        lines.append(f"\n{icon} *{label}*")
+        lines.append(f"\n*{label}*")
         for t in group:
             due_part = f" _(до {_fmt_due(t['due'])})_" if t.get("due") else ""
             lines.append(f"• `[{t['id']}]` {t['text']}{due_part}")
