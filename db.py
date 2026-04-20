@@ -111,3 +111,70 @@ def history_get(limit: int = 20) -> list[dict]:
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+def history_get_recent_smart(max_tokens: int = 2000) -> list[dict]:
+    """
+    Получить недавнюю историю (макс ~2000 токенов).
+    Убирает сообщения старше 7 дней.
+    """
+    from datetime import datetime, timedelta
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
+
+    cur.execute(
+        """
+        SELECT role, content, ts FROM (
+            SELECT id, role, content, ts FROM history
+            WHERE ts >= ?
+            ORDER BY id DESC LIMIT 50
+        ) ORDER BY id ASC
+        """,
+        (cutoff,),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    # оценка токенов (примерно 3 символа = 1 токен)
+    total_tokens = sum(len(r["content"]) // 3 for r in rows)
+
+    if total_tokens <= max_tokens:
+        return rows
+
+    # если не влезает — возвращаем последние 5 + старые если влезают
+    if len(rows) > 5:
+        result = []
+        tokens_left = max_tokens
+        last_five = rows[-5:]
+
+        for msg in last_five:
+            result.insert(0, msg)
+            tokens_left -= len(msg["content"]) // 3
+
+        for msg in rows[:-5]:
+            msg_tokens = len(msg["content"]) // 3
+            if tokens_left - msg_tokens > 0:
+                result.insert(0, msg)
+                tokens_left -= msg_tokens
+
+        return result
+
+    return rows
+
+
+def history_cleanup_old():
+    """
+    Очистить историю старше 30 дней (архивирование).
+    Вызывать периодически для экономии памяти БД.
+    """
+    from datetime import datetime, timedelta
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cutoff = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
+    cur.execute("DELETE FROM history WHERE ts < ?", (cutoff,))
+    conn.commit()
+    conn.close()

@@ -28,7 +28,13 @@ from agents.task_agent import (
     execute_commands,
     close,
 )
-from agents.voice_agent import transcribe
+from agents.memory_agent import cleanup as cleanup_history
+from agents.voice_agent import transcribe, summarize_transcript
+from agents.optimization_utils import (
+    extract_voice_duration_from_telegram,
+    should_transcribe_voice,
+    should_summarize_transcript,
+)
 from agents.scheduler_agent import start as start_scheduler
 
 logging.basicConfig(
@@ -155,12 +161,19 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
 
+    voice = update.message.voice
+    duration = extract_voice_duration_from_telegram(voice)
+
+    # Оптимизация: не транскрибируем очень короткие сообщения (< 2 сек)
+    if not should_transcribe_voice(duration):
+        await update.message.reply_text("🎤 Сообщение слишком короткое, не удалось распознать.")
+        return
+
     await context.bot.send_chat_action(
         chat_id=update.effective_chat.id, action=ChatAction.TYPING
     )
 
     # Скачиваем голосовое сообщение во временный файл
-    voice = update.message.voice
     voice_file = await context.bot.get_file(voice.file_id)
 
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
@@ -170,6 +183,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         user_text = transcribe(tmp_path)
+
+        # Оптимизация: суммаризируем очень длинные транскрипты (> 500 слов)
+        if should_summarize_transcript(user_text):
+            logger.info("Summarizing long voice transcript (%d words)", len(user_text.split()))
+            user_text = await asyncio.to_thread(summarize_transcript, user_text)
+
     except Exception as e:
         logger.error("Transcription error: %s", e)
         await update.message.reply_text("❌ Не удалось распознать голосовое сообщение.")
@@ -219,6 +238,13 @@ def main():
 
     init_db()
     logger.info("База данных инициализирована.")
+
+    # Очищаем историю старше 30 дней (для экономии памяти БД)
+    try:
+        cleanup_history()
+        logger.info("История очищена (удалены сообщения старше 30 дней).")
+    except Exception as e:
+        logger.warning("Ошибка при очистке истории: %s", e)
 
     app = Application.builder().token(_TELEGRAM_TOKEN).build()
 

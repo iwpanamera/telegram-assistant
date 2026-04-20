@@ -1,8 +1,10 @@
 import json
 import re
-from datetime import datetime
+import hashlib
+from datetime import datetime, timedelta
 from db import task_add, task_done, tasks_open
 from agents.memory_loop import update_memory
+from agents.optimization_utils import cache_get, cache_set
 
 _MONTHS = [
     "", "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -29,9 +31,31 @@ def _fmt_due(due: str) -> str:
 # Получение задач
 # ---------------------------------------------------------------------------
 
-def get_tasks() -> list[dict]:
-    """Вернуть список открытых задач из БД."""
-    return tasks_open()
+def get_tasks(use_cache: bool = True) -> list[dict]:
+    """
+    Вернуть список открытых задач из БД.
+
+    Args:
+        use_cache: если True — проверяет кэш, валидный 30 сек
+
+    Returns:
+        Список открытых задач
+    """
+    if use_cache:
+        cached = cache_get("tasks")
+        ts = cache_get("tasks_ts")
+
+        if cached is not None and ts is not None:
+            if datetime.now() - ts < timedelta(seconds=30):
+                return cached
+
+    tasks = tasks_open()
+
+    if use_cache:
+        cache_set("tasks", tasks)
+        cache_set("tasks_ts", datetime.now())
+
+    return tasks
 
 
 # ---------------------------------------------------------------------------
