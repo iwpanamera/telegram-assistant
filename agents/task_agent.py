@@ -207,34 +207,67 @@ def close(task_id: int) -> bool:
 # Парсинг JSON-команд из ответа Claude
 # ---------------------------------------------------------------------------
 
-# Ищем JSON-массивы с action в любом месте ответа
-_CMD_PATTERN = re.compile(
-    r"\n?\s*(\[(?:\{[^}]*\"action\"[^}]*\}(?:,\s*\{[^}]*\"action\"[^}]*\})*)\])\s*\n?",
-    re.DOTALL,
-)
-
-
 def parse_commands_from_response(answer: str) -> tuple[str, list[dict]]:
     """
-    Извлечь JSON-команды из ответа Claude (в любом месте, не только в конце).
-    Команды убираются из текста перед отправкой пользователю.
+    Витягти JSON-команди з відповіді Claude.
+    Шукаємо всі JSON-масиви [...] з полем "action" — незалежно від довжини і переносів.
+    Команди прибираються з тексту перед відправкою користувачу.
     """
     all_commands = []
-    clean_text = answer
+    spans_to_remove = []
 
-    for match in _CMD_PATTERN.finditer(answer):
-        raw_json = match.group(1)
+    i = 0
+    while i < len(answer):
+        if answer[i] != '[':
+            i += 1
+            continue
+
+        # Знаходимо кінець масиву балансуванням дужок
+        depth = 0
+        in_string = False
+        escape_next = False
+        j = i
+        while j < len(answer):
+            ch = answer[j]
+            if escape_next:
+                escape_next = False
+            elif ch == '\\' and in_string:
+                escape_next = True
+            elif ch == '"':
+                in_string = not in_string
+            elif not in_string:
+                if ch == '[' or ch == '{':
+                    depth += 1
+                elif ch == ']' or ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+
+        if depth != 0:
+            i += 1
+            continue
+
+        raw_json = answer[i:j+1]
         try:
             cmds = json.loads(raw_json)
-            if not isinstance(cmds, list):
-                cmds = [cmds]
-            # берём только объекты с полем action
-            cmds = [c for c in cmds if isinstance(c, dict) and "action" in c]
-            all_commands.extend(cmds)
-        except json.JSONDecodeError:
+            if isinstance(cmds, list):
+                valid = [c for c in cmds if isinstance(c, dict) and "action" in c]
+                if valid:
+                    all_commands.extend(valid)
+                    # запам'ятовуємо позицію для видалення (з пробілами навколо)
+                    start = max(0, i - 1) if i > 0 and answer[i-1] == '\n' else i
+                    end = j + 2 if j + 1 < len(answer) and answer[j+1] == '\n' else j + 1
+                    spans_to_remove.append((start, end))
+        except (json.JSONDecodeError, ValueError):
             pass
 
-    # убираем все найденные JSON-блоки из текста
-    clean_text = _CMD_PATTERN.sub("", answer).strip()
+        i = j + 1
+
+    # Видаляємо знайдені блоки з кінця (щоб не зсувати індекси)
+    clean_text = answer
+    for start, end in sorted(spans_to_remove, reverse=True):
+        clean_text = clean_text[:start] + clean_text[end:]
+    clean_text = clean_text.strip()
 
     return clean_text, all_commands
