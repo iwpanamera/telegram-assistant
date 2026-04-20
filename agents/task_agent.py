@@ -38,6 +38,19 @@ def get_tasks() -> list[dict]:
 # Форматирование для системного промпта
 # ---------------------------------------------------------------------------
 
+_PRIORITY_LABEL = {
+    "goal":    "[ЦЕЛЬ]",
+    "routine": "[РУТИНА]",
+    "other":   "[ПРОЧЕЕ]",
+}
+
+_PRIORITY_ICON = {
+    "goal":    "🎯",
+    "routine": "🔄",
+    "other":   "📌",
+}
+
+
 def format_tasks_for_prompt() -> str:
     """
     Вернуть краткий список открытых задач для вставки в системный промпт.
@@ -50,7 +63,9 @@ def format_tasks_for_prompt() -> str:
     lines = []
     for t in tasks:
         due_part = f" (до {_fmt_due(t['due'])})" if t.get("due") else ""
-        lines.append(f"  [{t['id']}] {t['text']}{due_part}")
+        priority = t.get("priority", "other")
+        label = _PRIORITY_LABEL.get(priority, "[ПРОЧЕЕ]")
+        lines.append(f"  [{t['id']}] {label} {t['text']}{due_part}")
     return "Открытые задачи:\n" + "\n".join(lines)
 
 
@@ -66,10 +81,23 @@ def format_tasks_for_user() -> str:
     if not tasks:
         return "✅ Открытых задач нет."
 
-    lines = ["*Открытые задачи:*"]
+    # Группируем по приоритету: сначала цели, потом рутина, потом прочее
+    groups = {"goal": [], "routine": [], "other": []}
     for t in tasks:
-        due_part = f" _(до {_fmt_due(t['due'])})_" if t.get("due") else ""
-        lines.append(f"• `[{t['id']}]` {t['text']}{due_part}")
+        p = t.get("priority", "other")
+        groups.get(p, groups["other"]).append(t)
+
+    lines = ["*Открытые задачи:*"]
+    for priority_key in ("goal", "routine", "other"):
+        group = groups[priority_key]
+        if not group:
+            continue
+        icon = _PRIORITY_ICON[priority_key]
+        label = {"goal": "Цели", "routine": "Рутина", "other": "Прочее"}[priority_key]
+        lines.append(f"\n{icon} *{label}*")
+        for t in group:
+            due_part = f" _(до {_fmt_due(t['due'])})_" if t.get("due") else ""
+            lines.append(f"• `[{t['id']}]` {t['text']}{due_part}")
     return "\n".join(lines)
 
 
@@ -94,10 +122,12 @@ def execute_commands(commands: list[dict]) -> str:
         if action == "add_task":
             text = cmd.get("text", "").strip()
             due = cmd.get("due") or None
+            priority = cmd.get("priority", "other")
             if text:
-                new_id = task_add(text, due)
+                new_id = task_add(text, due, priority)
                 due_note = f" (до {_fmt_due(due)})" if due else ""
-                results.append(f"➕ Задача добавлена [{new_id}]: {text}{due_note}")
+                icon = _PRIORITY_ICON.get(priority, "📌")
+                results.append(f"➕ {icon} Задача добавлена [{new_id}]: {text}{due_note}")
         elif action == "done_task":
             task_id = cmd.get("id")
             if task_id is not None:
