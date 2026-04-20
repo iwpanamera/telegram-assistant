@@ -161,6 +161,7 @@ def execute_commands(commands: list[dict]) -> str:
         Строка с результатами выполнения команд (для логирования / уведомления).
     """
     results = []
+    tasks_mutated = False
     for cmd in commands:
         action = cmd.get("action")
         if action == "add_task":
@@ -174,12 +175,14 @@ def execute_commands(commands: list[dict]) -> str:
                 p_icon = _PRIORITY_ICON.get(priority, "⚪")
                 c_icon = _CATEGORY_ICON.get(category, "📌")
                 results.append(f"➕ {p_icon}{c_icon} Задачу додано [{new_id}]: {text}{due_note}")
+                tasks_mutated = True
         elif action == "done_task":
             task_id = cmd.get("id")
             if task_id is not None:
                 ok = task_done(int(task_id))
                 if ok:
                     results.append(f"✅ Задача [{task_id}] закрыта.")
+                    tasks_mutated = True
                 else:
                     results.append(f"⚠️ Задача [{task_id}] не найдена или уже закрыта.")
         elif action == "update_memory":
@@ -190,6 +193,10 @@ def execute_commands(commands: list[dict]) -> str:
                 # обновление памяти — тихое, без уведомления пользователя
         else:
             pass  # неизвестные команды игнорируем тихо
+
+    # Інвалідуємо кеш задач після будь-якої мутації
+    if tasks_mutated:
+        cache_set("tasks_ts", None)
 
     return "\n".join(results)
 
