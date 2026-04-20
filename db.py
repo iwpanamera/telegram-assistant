@@ -16,16 +16,21 @@ def init_db():
             done     INTEGER NOT NULL DEFAULT 0,
             created  TEXT NOT NULL,
             due      TEXT,
-            priority TEXT NOT NULL DEFAULT 'other'
+            priority TEXT NOT NULL DEFAULT 'other',
+            category TEXT NOT NULL DEFAULT 'other'
         )
     """)
 
-    # Миграция: добавить колонку priority если её ещё нет
-    try:
-        cur.execute("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'other'")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # колонка уже есть
+    # Міграція: додати колонки якщо їх ще немає
+    for col_def in [
+        "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'other'",
+        "ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'other'",
+    ]:
+        try:
+            cur.execute(col_def)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # колонка вже є
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS history (
@@ -40,17 +45,20 @@ def init_db():
     conn.close()
 
 
-def task_add(text: str, due: str | None = None, priority: str = "other") -> int:
-    """Добавить задачу. Возвращает ID новой задачи."""
+def task_add(text: str, due: str | None = None, priority: str = "other", category: str = "other") -> int:
+    """Додати задачу. Повертає ID нової задачі."""
     valid_priorities = {"goal", "habit", "routine", "other"}
+    valid_categories = {"work", "family", "church", "health", "finance", "learning", "home", "other"}
     if priority not in valid_priorities:
         priority = "other"
+    if category not in valid_categories:
+        category = "other"
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     now = datetime.now().isoformat(timespec="seconds")
     cur.execute(
-        "INSERT INTO tasks (text, done, created, due, priority) VALUES (?, 0, ?, ?, ?)",
-        (text, now, due, priority),
+        "INSERT INTO tasks (text, done, created, due, priority, category) VALUES (?, 0, ?, ?, ?, ?)",
+        (text, now, due, priority, category),
     )
     task_id = cur.lastrowid
     conn.commit()
@@ -75,7 +83,7 @@ def tasks_open() -> list[dict]:
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, text, created, due, priority FROM tasks WHERE done = 0 ORDER BY id"
+        "SELECT id, text, created, due, priority, category FROM tasks WHERE done = 0 ORDER BY id"
     )
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()

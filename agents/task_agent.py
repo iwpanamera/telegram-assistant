@@ -2,7 +2,7 @@ import json
 import re
 import hashlib
 from datetime import datetime, timedelta
-from db import task_add, task_done, tasks_open
+from db import task_add, task_done, tasks_open  # task_add тепер приймає category
 from agents.memory_loop import update_memory
 from agents.optimization_utils import cache_get, cache_set
 
@@ -76,23 +76,35 @@ _PRIORITY_ICON = {
     "other":   "⚪",
 }
 
+_CATEGORY_ICON = {
+    "work":     "💼",
+    "family":   "👨‍👩‍👧",
+    "church":   "✝️",
+    "health":   "💪",
+    "finance":  "💰",
+    "learning": "📚",
+    "home":     "🏠",
+    "other":    "📌",
+}
+
 
 def format_tasks_for_prompt() -> str:
     """
-    Вернуть краткий список открытых задач для вставки в системный промпт.
-    Если задач нет — вернуть пустую строку.
+    Повернути короткий список відкритих задач для вставки у системний промпт.
     """
     tasks = get_tasks()
     if not tasks:
-        return "Открытых задач нет."
+        return "Відкритих задач немає."
 
     lines = []
     for t in tasks:
         due_part = f" (до {_fmt_due(t['due'])})" if t.get("due") else ""
         priority = t.get("priority", "other")
-        label = _PRIORITY_LABEL.get(priority, "[ПРОЧЕЕ]")
-        lines.append(f"  [{t['id']}] {label} {t['text']}{due_part}")
-    return "Открытые задачи:\n" + "\n".join(lines)
+        category = t.get("category", "other")
+        label = _PRIORITY_LABEL.get(priority, "[ІНШЕ]")
+        cat_icon = _CATEGORY_ICON.get(category, "📌")
+        lines.append(f"  [{t['id']}] {label} {cat_icon} {t['text']}{due_part}")
+    return "Відкриті задачі:\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +113,14 @@ def format_tasks_for_prompt() -> str:
 
 def format_tasks_for_user() -> str:
     """
-    Вернуть отформатированный Markdown-список задач для отображения пользователю.
+    Повернути Markdown-список задач для відображення користувачу.
+    Групування: пріоритет (А→В→Б→Г), у кожному пріоритеті — іконка категорії.
     """
     tasks = get_tasks()
     if not tasks:
-        return "✅ Открытых задач нет."
+        return "✅ Відкритих задач немає."
 
-    # Групуємо за пріоритетом: А → В → Б → Г
+    # Групуємо за пріоритетом
     groups = {"goal": [], "habit": [], "routine": [], "other": []}
     for t in tasks:
         p = t.get("priority", "other")
@@ -127,7 +140,8 @@ def format_tasks_for_user() -> str:
         lines.append(f"\n*{label}*")
         for t in group:
             due_part = f" _(до {_fmt_due(t['due'])})_" if t.get("due") else ""
-            lines.append(f"• `[{t['id']}]` {t['text']}{due_part}")
+            cat_icon = _CATEGORY_ICON.get(t.get("category", "other"), "📌")
+            lines.append(f"• {cat_icon} `[{t['id']}]` {t['text']}{due_part}")
     return "\n".join(lines)
 
 
@@ -153,11 +167,13 @@ def execute_commands(commands: list[dict]) -> str:
             text = cmd.get("text", "").strip()
             due = cmd.get("due") or None
             priority = cmd.get("priority", "other")
+            category = cmd.get("category", "other")
             if text:
-                new_id = task_add(text, due, priority)
+                new_id = task_add(text, due, priority, category)
                 due_note = f" (до {_fmt_due(due)})" if due else ""
-                icon = _PRIORITY_ICON.get(priority, "📌")
-                results.append(f"➕ {icon} Задача добавлена [{new_id}]: {text}{due_note}")
+                p_icon = _PRIORITY_ICON.get(priority, "⚪")
+                c_icon = _CATEGORY_ICON.get(category, "📌")
+                results.append(f"➕ {p_icon}{c_icon} Задачу додано [{new_id}]: {text}{due_note}")
         elif action == "done_task":
             task_id = cmd.get("id")
             if task_id is not None:
