@@ -1,1 +1,1 @@
-worker: python main.py
+worker: playwright install chromium --with-deps && python main.py

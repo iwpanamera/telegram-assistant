@@ -227,6 +227,9 @@ def execute_commands(commands: list[dict]) -> str:
             if section and content:
                 update_memory(section, content)
 
+        elif action == "browse":
+            pass  # обробляється окремо в main.py (async)
+
         else:
             pass  # невідомі команди ігноруємо
 

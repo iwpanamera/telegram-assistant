@@ -21,7 +21,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 load_dotenv()
 
 from db import init_db
-from agents.brain_agent import think
+from agents.brain_agent import think, think_browse_result
+from agents.browser_agent import execute_browse
 from agents.task_agent import (
     format_tasks_for_user,
     parse_commands_from_response,
@@ -145,11 +146,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         clean_text, commands = parse_commands_from_response(raw_answer)
+
+        # Розділяємо browse і звичайні команди
+        browse_cmds = [c for c in commands if c.get("action") == "browse"]
+        other_cmds  = [c for c in commands if c.get("action") != "browse"]
+
         cmd_result = ""
-        if commands:
-            cmd_result = execute_commands(commands)
-        reply = clean_text or "…"
+        if other_cmds:
+            cmd_result = execute_commands(other_cmds)
+
+        reply = clean_text or ("Зараз перевірю..." if browse_cmds else "…")
         await update.message.reply_text(reply)
+
+        # Виконуємо browse команди
+        for browse_cmd in browse_cmds:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id, action=ChatAction.TYPING
+            )
+            browse_result = await execute_browse(browse_cmd)
+            final_answer = await asyncio.to_thread(
+                think_browse_result, user_text, browse_result
+            )
+            await update.message.reply_text(final_answer)
+
         if cmd_result:
             await update.message.reply_text(cmd_result)
     except Exception as e:
@@ -220,12 +239,27 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     clean_text, commands = parse_commands_from_response(raw_answer)
 
-    cmd_result = ""
-    if commands:
-        cmd_result = execute_commands(commands)
+    # Розділяємо browse і звичайні команди
+    browse_cmds = [c for c in commands if c.get("action") == "browse"]
+    other_cmds  = [c for c in commands if c.get("action") != "browse"]
 
-    reply = clean_text or "…"
+    cmd_result = ""
+    if other_cmds:
+        cmd_result = execute_commands(other_cmds)
+
+    reply = clean_text or ("Зараз перевірю..." if browse_cmds else "…")
     await update.message.reply_text(reply)
+
+    # Виконуємо browse команди
+    for browse_cmd in browse_cmds:
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action=ChatAction.TYPING
+        )
+        browse_result = await execute_browse(browse_cmd)
+        final_answer = await asyncio.to_thread(
+            think_browse_result, user_text, browse_result
+        )
+        await update.message.reply_text(final_answer)
 
     if cmd_result:
         await update.message.reply_text(cmd_result)
