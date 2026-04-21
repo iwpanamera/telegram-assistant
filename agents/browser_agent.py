@@ -191,13 +191,20 @@ async def execute_browse(cmd: dict) -> str:
     Returns:
         Результат у вигляді тексту
     """
+    logger.info("execute_browse: cmd=%s", cmd)
+
     url = (cmd.get("url") or "").strip()
     query = (cmd.get("query") or "").strip()
     task = (cmd.get("task") or "витягни корисну інформацію").strip()
 
+    logger.info("execute_browse: url=%r query=%r task=%r", url, query, task)
+
     if url:
-        return await browse_url(url, task)
+        result = await browse_url(url, task)
     elif query:
-        return await search_web(query, task)
+        result = await search_web(query, task)
     else:
-        return "Потрібно вказати url або query для команди browse."
+        result = "Потрібно вказати url або query для команди browse."
+
+    logger.info("execute_browse: result preview: %s", result[:300])
+    return result

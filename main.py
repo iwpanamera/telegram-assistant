@@ -160,10 +160,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Виконуємо browse команди
         for browse_cmd in browse_cmds:
+            logger.info("handle_text: executing browse: %s", browse_cmd)
             await context.bot.send_chat_action(
                 chat_id=update.effective_chat.id, action=ChatAction.TYPING
             )
             browse_result = await execute_browse(browse_cmd)
+            logger.info("handle_text: browse_result length=%d", len(browse_result))
             final_answer = await asyncio.to_thread(
                 think_browse_result, user_text, browse_result
             )
