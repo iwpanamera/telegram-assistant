@@ -162,9 +162,29 @@ async def browse_url(url: str, task: str) -> str:
     return _analyze_with_claude(task, page_text, url)
 
 
+_WEATHER_KEYWORDS = ("погода", "weather", "температур", "прогноз", "forecast", "дощ", "сніг", "хмар")
+
+
+def _is_weather_query(query: str) -> str | None:
+    """
+    Якщо запит про погоду — повернути назву міста для wttr.in, інакше None.
+    Підтримує формат: "погода Київ", "weather Lviv", "погода в Одесі" тощо.
+    """
+    q = query.lower()
+    if not any(kw in q for kw in _WEATHER_KEYWORDS):
+        return None
+
+    # Прибираємо ключові слова, залишаємо назву міста
+    stop_words = {"погода", "weather", "прогноз", "forecast", "в", "у", "на",
+                  "сьогодні", "today", "зараз", "now", "поточна", "current"}
+    words = [w for w in query.split() if w.lower() not in stop_words]
+    city = "+".join(words) if words else "Kyiv"
+    return city
+
+
 async def search_web(query: str, task: str) -> str:
     """
-    Пошук через DuckDuckGo і витяг релевантних результатів.
+    Пошук в інтернеті. Для погодних запитів — wttr.in, для решти — DuckDuckGo.
 
     Args:
         query: Пошуковий запит
@@ -173,10 +193,27 @@ async def search_web(query: str, task: str) -> str:
     Returns:
         Текстова відповідь з результатами
     """
+    logger.info("search_web: query=%s", query)
+
+    # Погодні запити → wttr.in (спеціально для ботів)
+    city = _is_weather_query(query)
+    if city:
+        wttr_url = f"https://wttr.in/{city}?format=4"
+        logger.info("search_web: weather query detected, using wttr.in for city=%s", city)
+        page_text = await _fetch_page_text(wttr_url)
+        logger.info("search_web: wttr.in page_text length=%d, preview=%r", len(page_text), page_text[:200])
+        if page_text and "Помилка:" not in page_text:
+            return page_text  # wttr.in format=4 вже готовий рядок, Claude не потрібен
+        # fallback to full page
+        wttr_url_full = f"https://wttr.in/{city}"
+        page_text = await _fetch_page_text(wttr_url_full)
+        return _analyze_with_claude(task or query, page_text, wttr_url_full)
+
+    # Загальний пошук → DuckDuckGo HTML
     encoded = urllib.parse.quote_plus(query)
     search_url = f"https://html.duckduckgo.com/html/?q={encoded}"
-    logger.info("search_web: query=%s", query)
     page_text = await _fetch_page_text(search_url)
+    logger.info("search_web: DDG page_text length=%d", len(page_text))
     return _analyze_with_claude(task or query, page_text, search_url)
 
 
