@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 import anthropic
+import pytz
 from dotenv import load_dotenv
 
 from agents.memory_agent import remember, recall
@@ -12,6 +13,7 @@ load_dotenv()
 
 _client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 _MODEL = "claude-haiku-4-5-20251001"
+_TZ = pytz.timezone('Europe/Kyiv')
 
 # Повний system prompt (з кешуванням)
 _SYSTEM_TEMPLATE = """Ти — особистий ІІ-асистент користувача в Telegram.
@@ -136,12 +138,12 @@ def _build_system_prompt(simple: bool = False) -> tuple:
         tuple: (prompt_text, is_cacheable)
     """
     if simple:
-        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+        now = datetime.now(_TZ).strftime("%d.%m.%Y %H:%M")
         return _SYSTEM_SIMPLE.format(datetime_now=now), False
 
     # Повний prompt
     tasks_block = format_tasks_for_prompt()
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = datetime.now(_TZ).strftime("%d.%m.%Y %H:%M")
     memory = read_memory() or "(поки порожньо)"
     context = read_context() or "(не заповнено)"
 

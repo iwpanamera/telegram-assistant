@@ -1,6 +1,5 @@
 import json
 import re
-import hashlib
 from datetime import datetime, timedelta
 from db import (
     task_add, task_done, tasks_open,
@@ -272,14 +271,28 @@ def execute_commands(commands: list[dict]) -> str:
         elif action == "done_task":
             task_id = cmd.get("id")
             if task_id is not None:
-                ok = task_done(int(task_id))
+                try:
+                    tid = int(task_id)
+                except (TypeError, ValueError):
+                    results.append(f"❌ Невалідний id задачі: {task_id}")
+                    continue
+
+                # Дізнаємось priority ДО закриття (щоб зрозуміти, чи це habit)
+                priority_before = None
+                for r in get_tasks(use_cache=False):
+                    if r["id"] == tid:
+                        priority_before = r.get("priority")
+                        break
+
+                ok = task_done(tid)
                 if ok:
-                    # Для привичек инкрементуем streak
-                    habit_increment_streak(task_id)
-                    results.append(f"🎉 Задача [{task_id}] — виконано!")
+                    # Streak інкрементуємо тільки для привичок
+                    if priority_before == "habit":
+                        habit_increment_streak(tid)
+                    results.append(f"🎉 Задача [{tid}] — виконано!")
                     tasks_mutated = True
                 else:
-                    results.append(f"❌ Задача [{task_id}] не знайдена або вже закрита.")
+                    results.append(f"❌ Задача [{tid}] не знайдена або вже закрита.")
 
         elif action == "update_memory":
             section = cmd.get("section", "").strip()

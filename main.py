@@ -1,8 +1,16 @@
 import os
 import sys
+import time
 import logging
 import tempfile
 import asyncio
+
+# Синхронизація часового поясу на сервері (Railway використовує UTC)
+os.environ['TZ'] = 'Europe/Kyiv'
+try:
+    time.tzset()  # застосувати TZ до libc (Unix only)
+except AttributeError:
+    pass  # Windows
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -305,6 +313,13 @@ def main():
     if _MY_CHAT_ID == 0:
         raise RuntimeError("MY_CHAT_ID не задан в .env")
 
+    # Логируем текущее время для синхронизации
+    from datetime import datetime
+    import pytz
+    tz = pytz.timezone('Europe/Kyiv')
+    current_time = datetime.now(tz)
+    logger.info("🕐 Бот стартує. Поточний час: %s (Europe/Kyiv)", current_time.strftime("%Y-%m-%d %H:%M:%S %Z"))
+
     init_db()
     logger.info("База данных инициализирована.")
 
@@ -322,7 +337,18 @@ def main():
     except Exception as e:
         logger.warning("Ошибка при сбросе полосок: %s", e)
 
-    app = Application.builder().token(_TELEGRAM_TOKEN).build()
+    async def _post_init(application):
+        # Планувальник стартуємо тут, щоб він прив'язався до того самого
+        # event loop, на якому працює run_polling (PTB v21 створює власний loop).
+        start_scheduler(application.bot)
+        logger.info("Планировщик запущен (post_init).")
+
+    app = (
+        Application.builder()
+        .token(_TELEGRAM_TOKEN)
+        .post_init(_post_init)
+        .build()
+    )
 
     # Команды
     app.add_handler(CommandHandler("start", cmd_start))
@@ -333,10 +359,6 @@ def main():
     # Сообщения
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-
-    # Планировщик
-    start_scheduler(app.bot)
-    logger.info("Планировщик запущен.")
 
     logger.info("Бот запущен. Ожидаю сообщений...")
     app.run_polling(drop_pending_updates=True)

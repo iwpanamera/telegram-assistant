@@ -2,6 +2,10 @@ import os
 import psycopg2
 from datetime import datetime
 from contextlib import contextmanager
+import pytz
+
+# Встановлюємо часовий пояс для всіх datetime операцій
+_TZ = pytz.timezone('Europe/Kyiv')
 
 # Читаємо DATABASE_URL з環境
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -122,7 +126,7 @@ def task_add(
             if existing:
                 return existing[0]
 
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
         cur.execute(
             "INSERT INTO tasks (text, done, created, due, priority, category, type, asked_review) VALUES (%s, 0, %s, %s, %s, %s, %s, 0) RETURNING id",
             (text, now, due, priority, category, type),
@@ -161,7 +165,7 @@ def events_past_unreviewed() -> list[dict]:
     """
     with get_db() as conn:
         cur = conn.cursor()
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
         cur.execute(
             """
             SELECT id, text, due FROM tasks
@@ -191,7 +195,7 @@ def history_save(role: str, content: str):
     """Сохранить сообщение в историю диалога."""
     with get_db() as conn:
         cur = conn.cursor()
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
         cur.execute(
             "INSERT INTO history (role, content, ts) VALUES (%s, %s, %s)",
             (role, content, now),
@@ -226,7 +230,7 @@ def history_get_recent_smart(max_tokens: int = 2000) -> list[dict]:
     with get_db() as conn:
         cur = conn.cursor()
 
-        cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
+        cutoff = (datetime.now(_TZ) - timedelta(days=7)).isoformat(timespec="seconds")
 
         cur.execute(
             """
@@ -278,7 +282,7 @@ def history_cleanup_old():
     with get_db() as conn:
         cur = conn.cursor()
 
-        cutoff = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
+        cutoff = (datetime.now(_TZ) - timedelta(days=30)).isoformat(timespec="seconds")
         cur.execute("DELETE FROM history WHERE ts < %s", (cutoff,))
         conn.commit()
 
@@ -291,7 +295,7 @@ def habit_increment_streak(task_id: int):
     """Інкрементувати полоску дней подряд для привычки."""
     with get_db() as conn:
         cur = conn.cursor()
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
         cur.execute(
             "UPDATE tasks SET streak = streak + 1, last_done = %s WHERE id = %s AND type = 'task'",
             (now, task_id),
@@ -319,7 +323,7 @@ def habit_reset_stale_streaks():
         cur = conn.cursor()
 
         # Получаем привычки, которые не выполнялись > 24 часа
-        cutoff = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+        cutoff = (datetime.now(_TZ) - timedelta(hours=24)).isoformat(timespec="seconds")
         cur.execute(
             """
             UPDATE tasks
@@ -342,7 +346,7 @@ def reminder_add(text: str, remind_at: str) -> int:
     """Додати напоминання на певний час. Повертає ID."""
     with get_db() as conn:
         cur = conn.cursor()
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
         cur.execute(
             "INSERT INTO reminders (text, remind_at, created, done) VALUES (%s, %s, %s, 0) RETURNING id",
             (text, remind_at, now),
@@ -356,7 +360,7 @@ def reminders_pending() -> list[dict]:
     """Получить напоминания, которые должны сработать сейчас или в прошлом."""
     with get_db() as conn:
         cur = conn.cursor()
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
         cur.execute(
             """
             SELECT id, text, remind_at FROM reminders

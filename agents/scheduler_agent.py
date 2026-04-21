@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import pytz
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -10,6 +11,7 @@ from agents.task_agent import get_tasks, format_tasks_for_user, _fmt_due
 from db import events_past_unreviewed, event_mark_reviewed, reminders_pending, reminder_mark_done
 
 logger = logging.getLogger(__name__)
+_TZ = pytz.timezone('Europe/Kyiv')
 
 load_dotenv()
 
@@ -81,6 +83,10 @@ def start(bot):
     Кожні 30 хв — перевірка минулих подій.
     Кожну хвилину — перевірка напоминаний.
     """
+    # Логуємо поточний час для дебагу
+    current_time = datetime.now(_TZ)
+    logger.info("🕐 Планировщик запущен. Поточний час: %s (Europe/Kyiv)", current_time.strftime("%Y-%m-%d %H:%M:%S %Z"))
+
     _scheduler.add_job(
         _morning_checkin,
         trigger="cron",
