@@ -46,6 +46,16 @@ def init_db():
         )
     """)
 
+    # Очистка дублікатів подій (залишаємо тільки перший запис по text+due)
+    cur.execute("""
+        DELETE FROM tasks
+        WHERE type = 'event' AND done = 0 AND id NOT IN (
+            SELECT MIN(id) FROM tasks
+            WHERE type = 'event' AND done = 0
+            GROUP BY text, due
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -69,6 +79,18 @@ def task_add(
         type = "task"
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
+    # Для подій: не допускаємо дублікатів (той самий текст + дата)
+    if type == "event" and due:
+        cur.execute(
+            "SELECT id FROM tasks WHERE text = ? AND due = ? AND type = 'event' AND done = 0",
+            (text, due),
+        )
+        existing = cur.fetchone()
+        if existing:
+            conn.close()
+            return existing[0]
+
     now = datetime.now().isoformat(timespec="seconds")
     cur.execute(
         "INSERT INTO tasks (text, done, created, due, priority, category, type, asked_review) VALUES (?, 0, ?, ?, ?, ?, ?, 0)",

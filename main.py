@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 _MY_CHAT_ID = int(os.getenv("MY_CHAT_ID", "0"))
 _TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 
+# Блокировка: не допускаем параллельных вызовов think()
+# чтобы избежать гонки в истории диалога
+_think_lock = asyncio.Lock()
+
 
 # ---------------------------------------------------------------------------
 # Охранник: реагировать только на сообщения от владельца бота
@@ -129,7 +133,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     typing_task = asyncio.create_task(keep_typing())
     try:
-        raw_answer = await asyncio.to_thread(think, user_text)
+        async with _think_lock:
+            raw_answer = await asyncio.to_thread(think, user_text)
     except Exception as e:
         typing_task.cancel()
         logger.error("think() error: %s", e, exc_info=True)
@@ -208,7 +213,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     typing_task2 = asyncio.create_task(keep_typing_voice())
     try:
-        raw_answer = await asyncio.to_thread(think, user_text)
+        async with _think_lock:
+            raw_answer = await asyncio.to_thread(think, user_text)
     finally:
         typing_task2.cancel()
 
