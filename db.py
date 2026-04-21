@@ -137,10 +137,17 @@ def task_add(
 
 
 def task_done(task_id: int) -> bool:
-    """Отметить задачу/подію виконаною. Повертає True якщо знайдено."""
+    """
+    Отметить задачу/подію виконаною. Повертає True якщо знайдено.
+    Встановлює last_done, щоб тижневий огляд міг вибирати по часу закриття.
+    """
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("UPDATE tasks SET done = 1 WHERE id = %s AND done = 0", (task_id,))
+        now = datetime.now(_TZ).isoformat(timespec="seconds")
+        cur.execute(
+            "UPDATE tasks SET done = 1, last_done = %s WHERE id = %s AND done = 0",
+            (now, task_id),
+        )
         changed = cur.rowcount > 0
         conn.commit()
         return changed
@@ -310,6 +317,77 @@ def habit_check_streak(task_id: int) -> int:
         cur.execute("SELECT streak FROM tasks WHERE id = %s", (task_id,))
         row = cur.fetchone()
         return row[0] if row else 0
+
+
+def habit_daily_reset() -> int:
+    """
+    Щоденно: відкрити закриті привички заново, щоб було видно на сьогодні.
+    Повертає кількість перевідкритих привичок.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE tasks
+            SET done = 0
+            WHERE type = 'task' AND priority = 'habit' AND done = 1
+            """
+        )
+        count = cur.rowcount
+        conn.commit()
+        return count
+
+
+def tasks_closed_since(cutoff_iso: str) -> list[dict]:
+    """
+    Повернути задачі закриті з певного часу (last_done >= cutoff).
+    Використовується для тижневого огляду.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, text, priority, category, type, last_done, due
+            FROM tasks
+            WHERE done = 1
+              AND (last_done >= %s OR (last_done IS NULL AND created >= %s))
+            ORDER BY COALESCE(last_done, created) DESC
+            """,
+            (cutoff_iso, cutoff_iso),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        return rows
+
+
+def history_get_older_than(days: int = 7, limit: int = 100) -> list[dict]:
+    """
+    Повернути повідомлення старше N днів для суммаризації.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cutoff = (datetime.now(_TZ) - timedelta(days=days)).isoformat(timespec="seconds")
+        cur.execute(
+            """
+            SELECT id, role, content, ts FROM history
+            WHERE ts < %s
+            ORDER BY id ASC
+            LIMIT %s
+            """,
+            (cutoff, limit),
+        )
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def history_delete_by_ids(ids: list[int]):
+    """Видалити повідомлення історії по списку id."""
+    if not ids:
+        return
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM history WHERE id = ANY(%s)", (ids,))
+        conn.commit()
 
 
 def habit_reset_stale_streaks():

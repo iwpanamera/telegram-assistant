@@ -3,10 +3,16 @@ from groq import Groq
 from dotenv import load_dotenv
 import anthropic
 
+from agents.metrics import log_anthropic_usage
+
 load_dotenv()
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-_anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"), max_retries=3)
+_anthropic_client = anthropic.Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    max_retries=3,
+    timeout=30.0,
+)
 
 
 def transcribe(file_path: str) -> str:
@@ -49,4 +55,5 @@ def summarize_transcript(text: str) -> str:
             {"role": "user", "content": f"Суммаризируй: {text}"}
         ]
     )
+    log_anthropic_usage(response, label="transcript_summarize")
     return response.content[0].text

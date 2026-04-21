@@ -5,7 +5,8 @@ _BASE = os.path.dirname(os.path.dirname(__file__))
 _MEMORY_PATH = os.path.join(_BASE, "MEMORY.md")
 _CONTEXT_DIR = os.path.join(_BASE, "context")
 
-_SECTIONS = ["Voice", "Process", "People", "Projects", "Output", "Tools", "Goals"]
+_SECTIONS = ["Voice", "Process", "People", "Projects",
+             "Output", "Tools", "Goals", "Background"]
 
 
 def read_memory() -> str:

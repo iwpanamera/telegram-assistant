@@ -17,11 +17,17 @@ import urllib.parse
 import anthropic
 from dotenv import load_dotenv
 
+from agents.metrics import log_anthropic_usage
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+_client = anthropic.Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    max_retries=3,
+    timeout=30.0,
+)
 _MODEL = "claude-haiku-4-5-20251001"
 
 # Максимальна кількість символів тексту для Claude
@@ -197,6 +203,7 @@ def _analyze_with_claude(task: str, page_text: str, url: str = "") -> str:
             max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
+        log_anthropic_usage(response, label="browse_analyze")
         return response.content[0].text.strip()
     except Exception as e:
         logger.error("Claude analyze error: %s", e)
