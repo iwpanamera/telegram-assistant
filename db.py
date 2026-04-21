@@ -1,63 +1,75 @@
-import sqlite3
+import os
+import psycopg2
 from datetime import datetime
+from contextlib import contextmanager
 
-DB_PATH = "assistant.db"
+# Читаємо DATABASE_URL з環境
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+@contextmanager
+def get_db():
+    """Контекст-менеджер для PostgreSQL подключення."""
+    conn = psycopg2.connect(DATABASE_URL)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db():
-    """Инициализация базы данных и создание таблиц."""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    """Інініціалізація БД та створення таблиць."""
+    with get_db() as conn:
+        cur = conn.cursor()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            text         TEXT NOT NULL,
-            done         INTEGER NOT NULL DEFAULT 0,
-            created      TEXT NOT NULL,
-            due          TEXT,
-            priority     TEXT NOT NULL DEFAULT 'other',
-            category     TEXT NOT NULL DEFAULT 'other',
-            type         TEXT NOT NULL DEFAULT 'task',
-            asked_review INTEGER NOT NULL DEFAULT 0
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id           SERIAL PRIMARY KEY,
+                text         TEXT NOT NULL,
+                done         INTEGER NOT NULL DEFAULT 0,
+                created      TEXT NOT NULL,
+                due          TEXT,
+                priority     TEXT NOT NULL DEFAULT 'other',
+                category     TEXT NOT NULL DEFAULT 'other',
+                type         TEXT NOT NULL DEFAULT 'task',
+                asked_review INTEGER NOT NULL DEFAULT 0
+            )
+        """)
 
-    # Міграція: додати колонки якщо їх ще немає
-    migrations = [
-        "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'other'",
-        "ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'other'",
-        "ALTER TABLE tasks ADD COLUMN type TEXT NOT NULL DEFAULT 'task'",
-        "ALTER TABLE tasks ADD COLUMN asked_review INTEGER NOT NULL DEFAULT 0",
-    ]
-    for col_def in migrations:
-        try:
-            cur.execute(col_def)
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # колонка вже є
+        # Міграції: додаємо колонки якщо їх нема
+        migrations = [
+            "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'other'",
+            "ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'other'",
+            "ALTER TABLE tasks ADD COLUMN type TEXT NOT NULL DEFAULT 'task'",
+            "ALTER TABLE tasks ADD COLUMN asked_review INTEGER NOT NULL DEFAULT 0",
+        ]
+        for col_def in migrations:
+            try:
+                cur.execute(col_def)
+                conn.commit()
+            except psycopg2.errors.DuplicateColumn:
+                conn.rollback()  # колонка вже є
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS history (
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            role    TEXT NOT NULL,
-            content TEXT NOT NULL,
-            ts      TEXT NOT NULL
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS history (
+                id      SERIAL PRIMARY KEY,
+                role    TEXT NOT NULL,
+                content TEXT NOT NULL,
+                ts      TEXT NOT NULL
+            )
+        """)
 
-    # Очистка дублікатів подій (залишаємо тільки перший запис по text+due)
-    cur.execute("""
-        DELETE FROM tasks
-        WHERE type = 'event' AND done = 0 AND id NOT IN (
-            SELECT MIN(id) FROM tasks
-            WHERE type = 'event' AND done = 0
-            GROUP BY text, due
-        )
-    """)
+        # Очистка дублікатів подій
+        cur.execute("""
+            DELETE FROM tasks
+            WHERE type = 'event' AND done = 0 AND id NOT IN (
+                SELECT MIN(id) FROM tasks
+                WHERE type = 'event' AND done = 0
+                GROUP BY text, due
+            )
+        """)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 def task_add(
@@ -77,53 +89,50 @@ def task_add(
         category = "other"
     if type not in valid_types:
         type = "task"
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
 
-    # Для подій: не допускаємо дублікатів (той самий текст + дата)
-    if type == "event" and due:
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # Для подій: не допускаємо дублікатів (той самий текст + дата)
+        if type == "event" and due:
+            cur.execute(
+                "SELECT id FROM tasks WHERE text = %s AND due = %s AND type = 'event' AND done = 0",
+                (text, due),
+            )
+            existing = cur.fetchone()
+            if existing:
+                return existing[0]
+
+        now = datetime.now().isoformat(timespec="seconds")
         cur.execute(
-            "SELECT id FROM tasks WHERE text = ? AND due = ? AND type = 'event' AND done = 0",
-            (text, due),
+            "INSERT INTO tasks (text, done, created, due, priority, category, type, asked_review) VALUES (%s, 0, %s, %s, %s, %s, %s, 0) RETURNING id",
+            (text, now, due, priority, category, type),
         )
-        existing = cur.fetchone()
-        if existing:
-            conn.close()
-            return existing[0]
-
-    now = datetime.now().isoformat(timespec="seconds")
-    cur.execute(
-        "INSERT INTO tasks (text, done, created, due, priority, category, type, asked_review) VALUES (?, 0, ?, ?, ?, ?, ?, 0)",
-        (text, now, due, priority, category, type),
-    )
-    task_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return task_id
+        task_id = cur.fetchone()[0]
+        conn.commit()
+        return task_id
 
 
 def task_done(task_id: int) -> bool:
     """Отметить задачу/подію виконаною. Повертає True якщо знайдено."""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("UPDATE tasks SET done = 1 WHERE id = ? AND done = 0", (task_id,))
-    changed = cur.rowcount > 0
-    conn.commit()
-    conn.close()
-    return changed
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE tasks SET done = 1 WHERE id = %s AND done = 0", (task_id,))
+        changed = cur.rowcount > 0
+        conn.commit()
+        return changed
 
 
 def tasks_open() -> list[dict]:
     """Вернуть список открытых задач и событий."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, text, created, due, priority, category, type FROM tasks WHERE done = 0 ORDER BY id"
-    )
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return rows
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, text, created, due, priority, category, type FROM tasks WHERE done = 0 ORDER BY id"
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        return rows
 
 
 def events_past_unreviewed() -> list[dict]:
@@ -131,91 +140,87 @@ def events_past_unreviewed() -> list[dict]:
     Повернути події, що вже минули і по яких ще не питали 'як пройшло?'.
     Тобто: type='event', done=0, due < now, asked_review=0.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    now = datetime.now().isoformat(timespec="seconds")
-    cur.execute(
-        """
-        SELECT id, text, due FROM tasks
-        WHERE type = 'event'
-          AND done = 0
-          AND due IS NOT NULL
-          AND due < ?
-          AND asked_review = 0
-        ORDER BY due ASC
-        """,
-        (now,),
-    )
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return rows
+    with get_db() as conn:
+        cur = conn.cursor()
+        now = datetime.now().isoformat(timespec="seconds")
+        cur.execute(
+            """
+            SELECT id, text, due FROM tasks
+            WHERE type = 'event'
+              AND done = 0
+              AND due IS NOT NULL
+              AND due < %s
+              AND asked_review = 0
+            ORDER BY due ASC
+            """,
+            (now,),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        return rows
 
 
 def event_mark_reviewed(event_id: int):
     """Позначити що по події вже питали 'як пройшло?'."""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("UPDATE tasks SET asked_review = 1 WHERE id = ?", (event_id,))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE tasks SET asked_review = 1 WHERE id = %s", (event_id,))
+        conn.commit()
 
 
 def history_save(role: str, content: str):
     """Сохранить сообщение в историю диалога."""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    now = datetime.now().isoformat(timespec="seconds")
-    cur.execute(
-        "INSERT INTO history (role, content, ts) VALUES (?, ?, ?)",
-        (role, content, now),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+        now = datetime.now().isoformat(timespec="seconds")
+        cur.execute(
+            "INSERT INTO history (role, content, ts) VALUES (%s, %s, %s)",
+            (role, content, now),
+        )
+        conn.commit()
 
 
 def history_get(limit: int = 20) -> list[dict]:
     """Получить последние N сообщений истории."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT role, content, ts FROM (
-            SELECT id, role, content, ts FROM history ORDER BY id DESC LIMIT ?
-        ) ORDER BY id ASC
-        """,
-        (limit,),
-    )
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return rows
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT role, content, ts FROM (
+                SELECT id, role, content, ts FROM history ORDER BY id DESC LIMIT %s
+            ) t ORDER BY id ASC
+            """,
+            (limit,),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        return rows
 
 
 def history_get_recent_smart(max_tokens: int = 2000) -> list[dict]:
     """
-    Получить недавнюю историю (макс ~2000 токенов).
-    Убирает сообщения старше 7 дней.
+    Получить недавнюю історію (макс ~2000 токенів).
+    Убирає повідомлення старше 7 днів.
     """
-    from datetime import datetime, timedelta
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    from datetime import timedelta
 
-    cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
+    with get_db() as conn:
+        cur = conn.cursor()
 
-    cur.execute(
-        """
-        SELECT role, content, ts FROM (
-            SELECT id, role, content, ts FROM history
-            WHERE ts >= ?
-            ORDER BY id DESC LIMIT 50
-        ) ORDER BY id ASC
-        """,
-        (cutoff,),
-    )
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
+        cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
+
+        cur.execute(
+            """
+            SELECT role, content, ts FROM (
+                SELECT id, role, content, ts FROM history
+                WHERE ts >= %s
+                ORDER BY id DESC LIMIT 50
+            ) t ORDER BY id ASC
+            """,
+            (cutoff,),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
     # оценка токенов (примерно 3 символа = 1 токен)
     total_tokens = sum(len(r["content"]) // 3 for r in rows)
@@ -247,13 +252,13 @@ def history_get_recent_smart(max_tokens: int = 2000) -> list[dict]:
 def history_cleanup_old():
     """
     Очистить историю старше 30 дней (архивирование).
-    Вызывать периодически для экономии памяти БД.
+    Вызывать періодично для экономии памяти БД.
     """
-    from datetime import datetime, timedelta
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    from datetime import timedelta
 
-    cutoff = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
-    cur.execute("DELETE FROM history WHERE ts < ?", (cutoff,))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        cutoff = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
+        cur.execute("DELETE FROM history WHERE ts < %s", (cutoff,))
+        conn.commit()
