@@ -22,6 +22,7 @@ def init_db():
     with get_db() as conn:
         cur = conn.cursor()
 
+        # Створюємо таблицю tasks з усіма колонками
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id           SERIAL PRIMARY KEY,
@@ -36,19 +37,19 @@ def init_db():
             )
         """)
 
-        # Міграції: додаємо колонки якщо їх нема
+        # Міграції: додаємо колонки якщо їх нема (IF NOT EXISTS для PostgreSQL)
         migrations = [
-            "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'other'",
-            "ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'other'",
-            "ALTER TABLE tasks ADD COLUMN type TEXT NOT NULL DEFAULT 'task'",
-            "ALTER TABLE tasks ADD COLUMN asked_review INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'other'",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other'",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'task'",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS asked_review INTEGER NOT NULL DEFAULT 0",
         ]
         for col_def in migrations:
             try:
                 cur.execute(col_def)
                 conn.commit()
-            except psycopg2.errors.DuplicateColumn:
-                conn.rollback()  # колонка вже є
+            except Exception as e:
+                conn.rollback()
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS history (
@@ -60,14 +61,17 @@ def init_db():
         """)
 
         # Очистка дублікатів подій
-        cur.execute("""
-            DELETE FROM tasks
-            WHERE type = 'event' AND done = 0 AND id NOT IN (
-                SELECT MIN(id) FROM tasks
-                WHERE type = 'event' AND done = 0
-                GROUP BY text, due
-            )
-        """)
+        try:
+            cur.execute("""
+                DELETE FROM tasks
+                WHERE type = 'event' AND done = 0 AND id NOT IN (
+                    SELECT MIN(id) FROM tasks
+                    WHERE type = 'event' AND done = 0
+                    GROUP BY text, due
+                )
+            """)
+        except Exception:
+            pass  # таблиця порожня
 
         conn.commit()
 
