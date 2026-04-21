@@ -33,7 +33,9 @@ def init_db():
                 priority     TEXT NOT NULL DEFAULT 'other',
                 category     TEXT NOT NULL DEFAULT 'other',
                 type         TEXT NOT NULL DEFAULT 'task',
-                asked_review INTEGER NOT NULL DEFAULT 0
+                asked_review INTEGER NOT NULL DEFAULT 0,
+                streak       INTEGER NOT NULL DEFAULT 0,
+                last_done    TEXT
             )
         """)
 
@@ -43,6 +45,8 @@ def init_db():
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other'",
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'task'",
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS asked_review INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS streak INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_done TEXT",
         ]
         for col_def in migrations:
             try:
@@ -57,6 +61,17 @@ def init_db():
                 role    TEXT NOT NULL,
                 content TEXT NOT NULL,
                 ts      TEXT NOT NULL
+            )
+        """)
+
+        # Таблиця напоминаний
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id       SERIAL PRIMARY KEY,
+                text     TEXT NOT NULL,
+                remind_at TEXT NOT NULL,
+                created  TEXT NOT NULL,
+                done     INTEGER NOT NULL DEFAULT 0
             )
         """)
 
@@ -265,4 +280,99 @@ def history_cleanup_old():
 
         cutoff = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
         cur.execute("DELETE FROM history WHERE ts < %s", (cutoff,))
+        conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Функції для привичок (habits)
+# ---------------------------------------------------------------------------
+
+def habit_increment_streak(task_id: int):
+    """Інкрементувати полоску дней подряд для привычки."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        now = datetime.now().isoformat(timespec="seconds")
+        cur.execute(
+            "UPDATE tasks SET streak = streak + 1, last_done = %s WHERE id = %s AND type = 'task'",
+            (now, task_id),
+        )
+        conn.commit()
+
+
+def habit_check_streak(task_id: int) -> int:
+    """Получить текущую полоску привычки."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT streak FROM tasks WHERE id = %s", (task_id,))
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def habit_reset_stale_streaks():
+    """
+    Сбросить полоски для привичек, которые не выполнялись более дня.
+    Вызывать раз в день.
+    """
+    from datetime import timedelta
+
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # Получаем привычки, которые не выполнялись > 24 часа
+        cutoff = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+        cur.execute(
+            """
+            UPDATE tasks
+            SET streak = 0
+            WHERE type = 'task'
+              AND priority = 'habit'
+              AND done = 0
+              AND (last_done IS NULL OR last_done < %s)
+            """,
+            (cutoff,),
+        )
+        conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Функції для напоминаний (reminders)
+# ---------------------------------------------------------------------------
+
+def reminder_add(text: str, remind_at: str) -> int:
+    """Додати напоминання на певний час. Повертає ID."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        now = datetime.now().isoformat(timespec="seconds")
+        cur.execute(
+            "INSERT INTO reminders (text, remind_at, created, done) VALUES (%s, %s, %s, 0) RETURNING id",
+            (text, remind_at, now),
+        )
+        reminder_id = cur.fetchone()[0]
+        conn.commit()
+        return reminder_id
+
+
+def reminders_pending() -> list[dict]:
+    """Получить напоминания, которые должны сработать сейчас или в прошлом."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        now = datetime.now().isoformat(timespec="seconds")
+        cur.execute(
+            """
+            SELECT id, text, remind_at FROM reminders
+            WHERE done = 0 AND remind_at <= %s
+            ORDER BY remind_at ASC
+            """,
+            (now,),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        return rows
+
+
+def reminder_mark_done(reminder_id: int):
+    """Отметить напоминание как показанное."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE reminders SET done = 1 WHERE id = %s", (reminder_id,))
         conn.commit()

@@ -20,7 +20,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 load_dotenv()
 
-from db import init_db
+from db import (
+    init_db,
+    habit_reset_stale_streaks,
+    reminders_pending,
+)
 from agents.brain_agent import think, think_browse_result
 from agents.browser_agent import execute_browse
 from agents.task_agent import (
@@ -28,6 +32,7 @@ from agents.task_agent import (
     parse_commands_from_response,
     execute_commands,
     close,
+    _fmt_due,
 )
 from agents.memory_agent import cleanup as cleanup_history
 from agents.voice_agent import transcribe, summarize_transcript
@@ -68,13 +73,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await update.message.reply_text(
-        "Привіт! Я твій особистий ІІ-асистент.\n\n"
+        "👋 Привіт! Я твій особистий ІІ-асистент.\n\n"
         "Що вмію:\n"
-        "- Відповідати на запитання і вести діалог\n"
-        "- Вести задачі і події — просто скажи що треба зробити або куди йдеш\n"
-        "- Розпізнавати голосові повідомлення\n\n"
+        "✅ Відповідати на запитання і вести діалог\n"
+        "🎯 Вести цілі, звички, рутину — просто скажи що треба зробити\n"
+        "📅 Вести події — зустрічі, дзвінки, заходи\n"
+        "🔔 Напоминання на певний час\n"
+        "🎤 Розпізнавати голосові повідомлення\n\n"
         "Команди:\n"
-        "/tasks — показати відкриті задачі і події\n"
+        "/tasks — показати всі задачі, звички, рутину і події\n"
+        "/reminders — показати активні напоминання\n"
         "/done <id> — закрити задачу\n"
         "/start — це повідомлення"
     )
@@ -92,6 +100,26 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
+# Команда /reminders
+# ---------------------------------------------------------------------------
+
+async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    reminders = reminders_pending()
+    if not reminders:
+        await update.message.reply_text("🔔 Активных напоминаний нет.")
+        return
+
+    lines = ["🔔 **Напоминания:**"]
+    for reminder in reminders:
+        due_part = f" 📅 {_fmt_due(reminder['remind_at'])}" if reminder.get("remind_at") else ""
+        lines.append(f"  [{reminder['id']}] {reminder['text']}{due_part}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Команда /done <id>
 # ---------------------------------------------------------------------------
 
@@ -105,10 +133,10 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task_id = int(args[0])
     ok = close(task_id)
     if ok:
-        await update.message.reply_text(f"Задача [{task_id}] — [виконано].")
+        await update.message.reply_text(f"🎉 Задача [{task_id}] — виконано!")
     else:
         await update.message.reply_text(
-            f"Задача [{task_id}] не знайдена або вже закрита."
+            f"❌ Задача [{task_id}] не знайдена або вже закрита."
         )
 
 
@@ -287,11 +315,19 @@ def main():
     except Exception as e:
         logger.warning("Ошибка при очистке истории: %s", e)
 
+    # Сбрасываем старые полоски привычек (>24 часов)
+    try:
+        habit_reset_stale_streaks()
+        logger.info("Полоски привычек сброшены (старше 24 часов).")
+    except Exception as e:
+        logger.warning("Ошибка при сбросе полосок: %s", e)
+
     app = Application.builder().token(_TELEGRAM_TOKEN).build()
 
     # Команды
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("tasks", cmd_tasks))
+    app.add_handler(CommandHandler("reminders", cmd_reminders))
     app.add_handler(CommandHandler("done", cmd_done))
 
     # Сообщения

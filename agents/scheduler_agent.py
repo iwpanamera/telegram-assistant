@@ -1,12 +1,15 @@
 import os
 import asyncio
+import logging
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
-from agents.task_agent import get_tasks, format_tasks_for_user
-from db import events_past_unreviewed, event_mark_reviewed
+from agents.task_agent import get_tasks, format_tasks_for_user, _fmt_due
+from db import events_past_unreviewed, event_mark_reviewed, reminders_pending, reminder_mark_done
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -51,6 +54,23 @@ async def _check_past_events(bot):
         event_mark_reviewed(event["id"])
 
 
+async def _check_and_send_reminders(bot):
+    """
+    Перевіряє кожну хвилину чи є напоминання до відправки.
+    """
+    try:
+        pending = reminders_pending()
+        for reminder in pending:
+            try:
+                msg = f"🔔 **Напоминання:** {reminder['text']}\n📅 {_fmt_due(reminder['remind_at'])}"
+                await bot.send_message(chat_id=_MY_CHAT_ID, text=msg)
+                reminder_mark_done(reminder['id'])
+            except Exception as e:
+                logger.error("Error sending reminder %d: %s", reminder['id'], e)
+    except Exception as e:
+        logger.error("Error checking reminders: %s", e)
+
+
 def start(bot):
     """
     Запустити планувальник.
@@ -59,6 +79,7 @@ def start(bot):
       13:00 — перевірка прогресу
       18:00 — вечірній підсумок
     Кожні 30 хв — перевірка минулих подій.
+    Кожну хвилину — перевірка напоминаний.
     """
     _scheduler.add_job(
         _morning_checkin,
@@ -93,6 +114,14 @@ def start(bot):
         minutes=30,
         args=[bot],
         id="check_past_events",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _check_and_send_reminders,
+        trigger="interval",
+        minutes=1,
+        args=[bot],
+        id="check_reminders",
         replace_existing=True,
     )
     _scheduler.start()

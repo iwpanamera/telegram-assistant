@@ -2,7 +2,11 @@ import json
 import re
 import hashlib
 from datetime import datetime, timedelta
-from db import task_add, task_done, tasks_open
+from db import (
+    task_add, task_done, tasks_open,
+    habit_increment_streak, habit_check_streak,
+    reminder_add
+)
 from agents.memory_loop import update_memory
 from agents.optimization_utils import cache_get, cache_set
 
@@ -60,14 +64,32 @@ def get_tasks(use_cache: bool = True) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Форматування для системного промпту
+# Форматування для системного промпту та користувача
 # ---------------------------------------------------------------------------
+
+_PRIORITY_EMOJI = {
+    "goal":    "🎯",    # Ціль
+    "habit":   "⚡",    # Звичка (потребує енергії щодня)
+    "routine": "🔄",    # Рутина
+    "other":   "📌",    # Інше
+}
 
 _PRIORITY_LABEL = {
     "goal":    "[Ціль А]",
     "habit":   "[Звичка В]",
     "routine": "[Рутина Б]",
     "other":   "[Інше Г]",
+}
+
+_CATEGORY_EMOJI = {
+    "work":     "💼",   # Робота
+    "family":   "👨‍👩‍👧", # Сім'я
+    "church":   "⛪",   # Церква
+    "health":   "💪",   # Здоров'я
+    "finance":  "💰",   # Фінанси
+    "learning": "📚",   # Навчання
+    "home":     "🏠",   # Дім
+    "other":    "📌",   # Інше
 }
 
 _CATEGORY_LABEL = {
@@ -80,6 +102,18 @@ _CATEGORY_LABEL = {
     "home":     "[дім]",
     "other":    "[інше]",
 }
+
+
+def _build_habit_streak(task_id: int, text: str) -> str:
+    """Побудувати полоску дней подряд для привычки."""
+    streak = habit_check_streak(task_id)
+    if streak == 0:
+        return text
+    # Полоска з символів 🟩 (максимум 7 днів показуємо явно)
+    bar = "🟩" * min(streak, 7)
+    if streak > 7:
+        bar += f" +{streak-7}"
+    return f"{text} {bar}"
 
 
 def format_tasks_for_prompt() -> str:
@@ -121,11 +155,11 @@ def format_tasks_for_prompt() -> str:
 def format_tasks_for_user() -> str:
     """
     Повернути список задач і подій для відображення користувачу.
-    Без емоджі. Групування задач: А -> В -> Б -> Г. Події — окремо.
+    З емоджі! Групування задач: А -> В -> Б -> Г. Події — окремо.
     """
     records = get_tasks()
     if not records:
-        return "Відкритих задач і подій немає."
+        return "✨ Відкритих задач і подій немає."
 
     tasks = [r for r in records if r.get("type", "task") == "task"]
     events = [r for r in records if r.get("type", "task") == "event"]
@@ -139,12 +173,12 @@ def format_tasks_for_user() -> str:
             p = t.get("priority", "other")
             groups.get(p, groups["other"]).append(t)
 
-        lines.append("Задачі:")
+        lines.append("📋 **Задачі:**")
         order = [
-            ("goal",    "Ціль (А)"),
-            ("habit",   "Звичка (В)"),
-            ("routine", "Рутина (Б)"),
-            ("other",   "Інше (Г)"),
+            ("goal",    "🎯 Ціль (А)"),
+            ("habit",   "⚡ Звичка (В)"),
+            ("routine", "🔄 Рутина (Б)"),
+            ("other",   "📌 Інше (Г)"),
         ]
         for priority_key, label in order:
             group = groups[priority_key]
@@ -152,18 +186,22 @@ def format_tasks_for_user() -> str:
                 continue
             lines.append(f"\n{label}")
             for t in group:
-                due_part = f" (до {_fmt_due(t['due'])})" if t.get("due") else ""
-                cat_label = _CATEGORY_LABEL.get(t.get("category", "other"), "[інше]")
-                lines.append(f"  [{t['id']}] {cat_label} {t['text']}{due_part}")
+                due_part = f" ⏰ {_fmt_due(t['due'])}" if t.get("due") else ""
+                cat_emoji = _CATEGORY_EMOJI.get(t.get("category", "other"), "📌")
+                task_text = t['text']
+                # Для привичек добавляем полоску дней
+                if priority_key == "habit":
+                    task_text = _build_habit_streak(t['id'], task_text)
+                lines.append(f"  [{t['id']}] {cat_emoji} {task_text}{due_part}")
 
     # --- Події ---
     if events:
         if lines:
             lines.append("")
-        lines.append("Події:")
+        lines.append("📅 **Події:**")
         for e in events:
             due_part = f" — {_fmt_due(e['due'])}" if e.get("due") else ""
-            lines.append(f"  [{e['id']}] {e['text']}{due_part}")
+            lines.append(f"  [{e['id']}] 📌 {e['text']}{due_part}")
 
     return "\n".join(lines)
 
@@ -178,7 +216,9 @@ def execute_commands(commands: list[dict]) -> str:
 
     Підтримувані команди:
         {"action": "add_task", "text": "...", "due": "...", "priority": "...", "category": "..."}
+        {"action": "add_habit", "text": "...", "category": "..."}
         {"action": "add_event", "text": "...", "due": "..."}
+        {"action": "add_reminder", "text": "...", "remind_at": "..."}
         {"action": "done_task", "id": N}
         {"action": "update_memory", "section": "...", "content": "..."}
 
@@ -197,9 +237,19 @@ def execute_commands(commands: list[dict]) -> str:
             category = cmd.get("category", "other")
             if text:
                 new_id = task_add(text, due, priority, category, type="task")
-                due_note = f" (до {_fmt_due(due)})" if due else ""
-                p_label = _PRIORITY_LABEL.get(priority, "[Інше]")
-                results.append(f"Задачу додано [{new_id}] {p_label}: {text}{due_note}")
+                due_note = f" ⏰ {_fmt_due(due)}" if due else ""
+                emoji = _PRIORITY_EMOJI.get(priority, "📌")
+                cat_emoji = _CATEGORY_EMOJI.get(category, "📌")
+                results.append(f"✅ Задачу додано [{new_id}] {emoji} {cat_emoji} {text}{due_note}")
+                tasks_mutated = True
+
+        elif action == "add_habit":
+            text = cmd.get("text", "").strip()
+            category = cmd.get("category", "health")
+            if text:
+                new_id = task_add(text, None, priority="habit", category=category, type="task")
+                cat_emoji = _CATEGORY_EMOJI.get(category, "📌")
+                results.append(f"⚡ Звичку додано [{new_id}] {cat_emoji} {text}")
                 tasks_mutated = True
 
         elif action == "add_event":
@@ -207,19 +257,29 @@ def execute_commands(commands: list[dict]) -> str:
             due = cmd.get("due") or None
             if text:
                 new_id = task_add(text, due, priority="other", category="other", type="event")
-                due_note = f" — {_fmt_due(due)}" if due else ""
-                results.append(f"Подію додано [{new_id}]: {text}{due_note}")
+                due_note = f" 📅 {_fmt_due(due)}" if due else ""
+                results.append(f"📌 Подію додано [{new_id}]: {text}{due_note}")
                 tasks_mutated = True
+
+        elif action == "add_reminder":
+            text = cmd.get("text", "").strip()
+            remind_at = cmd.get("remind_at") or None
+            if text and remind_at:
+                new_id = reminder_add(text, remind_at)
+                due_note = f" 📅 {_fmt_due(remind_at)}" if remind_at else ""
+                results.append(f"🔔 Напоминання додано [{new_id}]: {text}{due_note}")
 
         elif action == "done_task":
             task_id = cmd.get("id")
             if task_id is not None:
                 ok = task_done(int(task_id))
                 if ok:
-                    results.append(f"Задача [{task_id}] — [виконано].")
+                    # Для привичек инкрементуем streak
+                    habit_increment_streak(task_id)
+                    results.append(f"🎉 Задача [{task_id}] — виконано!")
                     tasks_mutated = True
                 else:
-                    results.append(f"Задача [{task_id}] не знайдена або вже закрита.")
+                    results.append(f"❌ Задача [{task_id}] не знайдена або вже закрита.")
 
         elif action == "update_memory":
             section = cmd.get("section", "").strip()
