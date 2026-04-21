@@ -54,6 +54,7 @@ async def _fetch_page_text(url: str) -> str:
     try:
         from playwright.async_api import async_playwright
 
+        logger.info("browser_agent: launching Chromium for %s", url)
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
@@ -62,6 +63,7 @@ async def _fetch_page_text(url: str) -> str:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--single-process",
                 ],
             )
             context = await browser.new_context(
@@ -104,9 +106,10 @@ async def _fetch_page_text(url: str) -> str:
         return _clean_page_text(raw_text)
 
     except ImportError:
-        return "Помилка: Playwright не встановлений. Виконай: pip install playwright && playwright install chromium"
+        logger.error("Playwright not installed!")
+        return "Помилка: Playwright не встановлений."
     except Exception as e:
-        logger.error("_fetch_page_text error: %s", e, exc_info=True)
+        logger.error("_fetch_page_text error for %s: %s", url, e, exc_info=True)
         return f"Помилка при завантаженні сторінки: {e}"
 
 
