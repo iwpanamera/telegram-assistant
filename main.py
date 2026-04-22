@@ -64,7 +64,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # DEBUG: логуємо часовий пояс при старті
-_utc_now = datetime.utcnow()
+_utc_now = datetime.now(pytz.UTC)
 _kyiv_now = datetime.now(_tz)
 _offset_hours = (_kyiv_now - _utc_now).total_seconds() / 3600
 logger.info(f"🕐 TIMEZONE CHECK: UTC={_utc_now.strftime('%H:%M')}, Kyiv={_kyiv_now.strftime('%H:%M')}, Offset={_offset_hours}h")
