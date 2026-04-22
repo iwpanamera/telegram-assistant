@@ -40,6 +40,8 @@ TOOLS = [
         "name": "add_task",
         "description": (
             "Додати звичайну задачу. "
+            "Якщо користувач не указав дату — НЕ додавай поле due (задача на сьогодні). "
+            "Якщо указав конкретну дату/час — передай ISO формат (2026-04-22T17:00). "
             "ВАЖЛИВО: priority=goal якщо задача просуває одну з цілей з памʼяті; "
             "priority=routine для побутових/адміністративних; "
             "priority=other для всього іншого."
@@ -50,7 +52,7 @@ TOOLS = [
                 "text": {"type": "string"},
                 "due": {
                     "type": "string",
-                    "description": "ISO datetime, напр. 2026-04-25T14:00. Опціонально.",
+                    "description": "ISO datetime, напр. 2026-04-25T14:00. ТІЛЬКИ якщо користувач указав дату!",
                 },
                 "priority": {"type": "string", "enum": _PRIORITIES},
                 "category": {"type": "string", "enum": _CATEGORIES},
@@ -75,25 +77,29 @@ TOOLS = [
         "description": (
             "Додати подію — те, що відбудеться у конкретний час "
             "(зустріч, дзвінок, захід, лікар, тренування). "
+            "due ОБОВ'ЯЗКОВЕ і у ISO форматі: 2026-04-22T16:00. "
             "Після минулого часу запитаю 'як пройшло?'"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string"},
-                "due": {"type": "string", "description": "ISO datetime"},
+                "due": {"type": "string", "description": "ISO datetime, обов'язкове! 2026-04-22T16:00"},
             },
             "required": ["text", "due"],
         },
     },
     {
         "name": "add_reminder",
-        "description": "Додати напоминання — спрацює у вказаний час.",
+        "description": (
+            "Додати напоминання — спрацює у вказаний час. "
+            "remind_at ОБОВ'ЯЗКОВЕ і у ISO форматі: 2026-04-22T17:00."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string"},
-                "remind_at": {"type": "string", "description": "ISO datetime"},
+                "remind_at": {"type": "string", "description": "ISO datetime, обов'язкове! 2026-04-22T17:00"},
             },
             "required": ["text", "remind_at"],
         },
@@ -171,6 +177,12 @@ _SYSTEM_TEMPLATE = """Ти — особистий ІІ-асистент кори
 - Browse: актуальні ціни, графік, контакти, курс, погода.
   Для погоди — використовуй query, напр. "погода Київ".
   Для відомих сайтів (bank.gov.ua, rozetka) — url напряму.
+
+## ВАЖЛИВО: Дати і часи
+- Якщо користувач просить додати задачу БЕЗ указання дати — це задача на СЬОГОДНІ (без поля due)
+- Якщо користувач говорить "завтра" / "вдень" / "вечером" / "о 17:00" — тоді ставиш конкретну дату/час
+- Дату/час передаєш як ISO: "2026-04-22T17:00" (SAMEDAY якщо не указано, не NEXTDAY)
+- "скоро" / "невдовзі" = без дати (сьогодні)
 
 Використовуй tools для дій. Говори природно, а дії виконуй окремо через tool calls.
 
