@@ -202,10 +202,12 @@ def _build_system_prompt(simple: bool = False) -> tuple:
     """Побудувати system prompt. Returns (text, is_full_context)."""
     if simple:
         now = datetime.now(_TZ).strftime("%d.%m.%Y %H:%M")
+        logger.info(f"[TIMEZONE DEBUG] Simple prompt time: {now}")
         return _SYSTEM_SIMPLE.format(datetime_now=now), False
 
     tasks_block = format_tasks_for_prompt()
     now = datetime.now(_TZ).strftime("%d.%m.%Y %H:%M")
+    logger.info(f"[TIMEZONE DEBUG] Full prompt time: {now} | UTC now: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}")
     memory = read_memory() or "(поки порожньо)"
     context = read_context() or "(не заповнено)"
 

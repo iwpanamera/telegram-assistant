@@ -5,6 +5,8 @@ import signal
 import logging
 import tempfile
 import asyncio
+from datetime import datetime
+import pytz
 
 # Синхронизація часового поясу на сервері (Railway використовує UTC)
 os.environ['TZ'] = 'Europe/Kyiv'
@@ -12,6 +14,9 @@ try:
     time.tzset()  # застосувати TZ до libc (Unix only)
 except AttributeError:
     pass  # Windows
+
+# Перевіряємо часовий пояс при старті
+_tz = pytz.timezone('Europe/Kyiv')
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -57,6 +62,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# DEBUG: логуємо часовий пояс при старті
+_utc_now = datetime.utcnow()
+_kyiv_now = datetime.now(_tz)
+_offset_hours = (_kyiv_now - _utc_now).total_seconds() / 3600
+logger.info(f"🕐 TIMEZONE CHECK: UTC={_utc_now.strftime('%H:%M')}, Kyiv={_kyiv_now.strftime('%H:%M')}, Offset={_offset_hours}h")
 
 _MY_CHAT_ID = int(os.getenv("MY_CHAT_ID", "0"))
 _TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
