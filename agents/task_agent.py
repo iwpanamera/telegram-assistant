@@ -8,6 +8,7 @@ from db import (
 )
 from agents.memory_loop import update_memory
 from agents.optimization_utils import cache_get, cache_set
+from agents.calendar_agent import add_event_to_calendar
 
 _MONTHS_UA = [
     "", "січня", "лютого", "березня", "квітня", "травня", "червня",
@@ -137,7 +138,7 @@ def format_tasks_for_prompt() -> str:
     """
     import pytz
     tz = pytz.timezone("Europe/Kyiv")
-    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+    today_str = datetime.now(pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
 
     records = get_tasks()
     if not records:
@@ -216,7 +217,7 @@ def format_tasks_for_user(today_only: bool = False) -> str:
     """
     import pytz
     tz = pytz.timezone("Europe/Kyiv")
-    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+    today_str = datetime.now(pytz.utc).astimezone(tz).strftime("%Y-%m-%d")
 
     records = get_tasks()
     if not records:
@@ -339,7 +340,14 @@ def execute_commands(commands: list[dict]) -> str:
             if text:
                 new_id = task_add(text, due, priority="other", category="other", type="event")
                 due_note = f" 📅 {_fmt_due(due)}" if due else ""
-                results.append(f"📌 Подію додано [{new_id}]: {text}{due_note}")
+
+                # Додаємо в Google Calendar (якщо налаштовано)
+                gcal_link = None
+                if due:
+                    gcal_link = add_event_to_calendar(title=text, due_iso=due)
+
+                gcal_note = f"\n🗓 [Google Calendar]({gcal_link})" if gcal_link else ""
+                results.append(f"📌 Подію додано [{new_id}]: {text}{due_note}{gcal_note}")
                 tasks_mutated = True
 
         elif action == "add_reminder":
