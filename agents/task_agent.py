@@ -115,10 +115,30 @@ def _build_habit_streak(task_id: int, text: str) -> str:
     return f"{text} {bar}"
 
 
+def _classify_due(due: str | None, today_str: str) -> str:
+    """
+    Повертає 'overdue', 'today', або 'future' залежно від дати.
+    Задачі без due — 'today'.
+    """
+    if not due:
+        return "today"
+    due_date = due[:10]  # перші 10 символів — YYYY-MM-DD
+    if due_date < today_str:
+        return "overdue"
+    if due_date == today_str:
+        return "today"
+    return "future"
+
+
 def format_tasks_for_prompt() -> str:
     """
     Повернути короткий список відкритих задач і подій для системного промпту.
+    Групує по датах: прострочені / сьогодні / майбутні.
     """
+    import pytz
+    tz = pytz.timezone("Europe/Kyiv")
+    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+
     records = get_tasks()
     if not records:
         return "Відкритих задач і подій немає."
@@ -126,23 +146,58 @@ def format_tasks_for_prompt() -> str:
     tasks = [r for r in records if r.get("type", "task") == "task"]
     events = [r for r in records if r.get("type", "task") == "event"]
 
+    overdue_tasks, today_tasks, future_tasks = [], [], []
+    for t in tasks:
+        bucket = _classify_due(t.get("due"), today_str)
+        if bucket == "overdue":
+            overdue_tasks.append(t)
+        elif bucket == "today":
+            today_tasks.append(t)
+        else:
+            future_tasks.append(t)
+
+    overdue_events, today_events, future_events = [], [], []
+    for e in events:
+        bucket = _classify_due(e.get("due"), today_str)
+        if bucket == "overdue":
+            overdue_events.append(e)
+        elif bucket == "today":
+            today_events.append(e)
+        else:
+            future_events.append(e)
+
     lines = []
 
-    if tasks:
-        lines.append("Задачі:")
-        for t in tasks:
-            due_part = f" (до {_fmt_due(t['due'])})" if t.get("due") else ""
-            priority = t.get("priority", "other")
-            category = t.get("category", "other")
-            label = _PRIORITY_LABEL.get(priority, "[Інше]")
-            cat_label = _CATEGORY_LABEL.get(category, "[інше]")
-            lines.append(f"  [{t['id']}] {label} {cat_label} {t['text']}{due_part}")
+    def _task_line(t):
+        due_part = f" (до {_fmt_due(t['due'])})" if t.get("due") else ""
+        label = _PRIORITY_LABEL.get(t.get("priority", "other"), "[Інше]")
+        cat_label = _CATEGORY_LABEL.get(t.get("category", "other"), "[інше]")
+        return f"  [{t['id']}] {label} {cat_label} {t['text']}{due_part}"
 
-    if events:
-        lines.append("Події:")
-        for e in events:
-            due_part = f" ({_fmt_due(e['due'])})" if e.get("due") else ""
-            lines.append(f"  [{e['id']}] [подія] {e['text']}{due_part}")
+    def _event_line(e):
+        due_part = f" ({_fmt_due(e['due'])})" if e.get("due") else ""
+        return f"  [{e['id']}] [подія] {e['text']}{due_part}"
+
+    if overdue_tasks or overdue_events:
+        lines.append("⚠️ ПРОСТРОЧЕНІ (з минулих днів, не закриті):")
+        for t in overdue_tasks:
+            lines.append(_task_line(t))
+        for e in overdue_events:
+            lines.append(_event_line(e))
+
+    if today_tasks or today_events:
+        lines.append(f"📅 СЬОГОДНІ ({today_str}):")
+        for t in today_tasks:
+            lines.append(_task_line(t))
+        for e in today_events:
+            lines.append(_event_line(e))
+
+    if future_tasks or future_events:
+        lines.append("🔮 МАЙБУТНІ:")
+        for t in future_tasks:
+            lines.append(_task_line(t))
+        for e in future_events:
+            lines.append(_event_line(e))
 
     return "\n".join(lines)
 
@@ -151,17 +206,31 @@ def format_tasks_for_prompt() -> str:
 # Форматування для користувача
 # ---------------------------------------------------------------------------
 
-def format_tasks_for_user() -> str:
+def format_tasks_for_user(today_only: bool = False) -> str:
     """
     Повернути список задач і подій для відображення користувачу.
     З емоджі! Групування задач: А -> В -> Б -> Г. Події — окремо.
+
+    Args:
+        today_only: якщо True — показує тільки задачі на сьогодні (без прострочених і майбутніх).
     """
+    import pytz
+    tz = pytz.timezone("Europe/Kyiv")
+    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+
     records = get_tasks()
     if not records:
         return "✨ Відкритих задач і подій немає."
 
-    tasks = [r for r in records if r.get("type", "task") == "task"]
-    events = [r for r in records if r.get("type", "task") == "event"]
+    all_tasks = [r for r in records if r.get("type", "task") == "task"]
+    all_events = [r for r in records if r.get("type", "task") == "event"]
+
+    if today_only:
+        tasks = [t for t in all_tasks if _classify_due(t.get("due"), today_str) == "today"]
+        events = [e for e in all_events if _classify_due(e.get("due"), today_str) in ("today", "overdue")]
+    else:
+        tasks = all_tasks
+        events = all_events
 
     lines = []
 
@@ -193,6 +262,16 @@ def format_tasks_for_user() -> str:
                     task_text = _build_habit_streak(t['id'], task_text)
                 lines.append(f"  [{t['id']}] {cat_emoji} {task_text}{due_part}")
 
+    # --- Прострочені (тільки якщо не today_only) ---
+    if not today_only:
+        overdue_tasks = [t for t in all_tasks if _classify_due(t.get("due"), today_str) == "overdue"]
+        if overdue_tasks:
+            lines.append("\n⚠️ **Прострочені:**")
+            for t in overdue_tasks:
+                due_part = f" ⏰ {_fmt_due(t['due'])}" if t.get("due") else ""
+                cat_emoji = _CATEGORY_EMOJI.get(t.get("category", "other"), "📌")
+                lines.append(f"  [{t['id']}] {cat_emoji} {t['text']}{due_part}")
+
     # --- Події ---
     if events:
         if lines:
@@ -201,6 +280,9 @@ def format_tasks_for_user() -> str:
         for e in events:
             due_part = f" — {_fmt_due(e['due'])}" if e.get("due") else ""
             lines.append(f"  [{e['id']}] 📌 {e['text']}{due_part}")
+
+    if not tasks and not events:
+        return "✨ Відкритих задач і подій немає."
 
     return "\n".join(lines)
 
