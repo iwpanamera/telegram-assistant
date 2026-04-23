@@ -322,16 +322,23 @@ def habit_check_streak(task_id: int) -> int:
 def habit_daily_reset() -> int:
     """
     Щоденно: відкрити закриті привички заново, щоб було видно на сьогодні.
+    Перевідкриває ТІЛЬКИ задачі без due або з due на сьогодні+.
+    Задачі з due в минулому — одноразові, не чіпаємо.
     Повертає кількість перевідкритих привичок.
     """
     with get_db() as conn:
         cur = conn.cursor()
+        today = datetime.now(_TZ).strftime("%Y-%m-%d")
         cur.execute(
             """
             UPDATE tasks
             SET done = 0
-            WHERE type = 'task' AND priority = 'habit' AND done = 1
-            """
+            WHERE type = 'task'
+              AND priority = 'habit'
+              AND done = 1
+              AND (due IS NULL OR due >= %s)
+            """,
+            (today,),
         )
         count = cur.rowcount
         conn.commit()
