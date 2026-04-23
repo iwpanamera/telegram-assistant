@@ -158,7 +158,7 @@ def tasks_open() -> list[dict]:
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, text, created, due, priority, category, type FROM tasks WHERE done = 0 ORDER BY id"
+            "SELECT id, text, created, due, priority, category, type, streak FROM tasks WHERE done = 0 ORDER BY id"
         )
         columns = [desc[0] for desc in cur.description]
         rows = [dict(zip(columns, row)) for row in cur.fetchall()]
@@ -465,3 +465,14 @@ def reminder_mark_done(reminder_id: int):
         cur = conn.cursor()
         cur.execute("UPDATE reminders SET done = 1 WHERE id = %s", (reminder_id,))
         conn.commit()
+
+
+def reminders_active() -> list[dict]:
+    """Повернути всі активні (не виконані) напоминання, незалежно від часу."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, text, remind_at FROM reminders WHERE done = 0 ORDER BY remind_at ASC",
+        )
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]

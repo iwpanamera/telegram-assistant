@@ -19,12 +19,13 @@ except AttributeError:
 _tz = pytz.timezone('Europe/Kyiv')
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -38,14 +39,18 @@ from db import (
     init_db,
     habit_reset_stale_streaks,
     reminders_pending,
+    reminders_active,
+    reminder_mark_done,
 )
 from agents.brain_agent import think, think_browse_result
 from agents.browser_agent import execute_browse
 from agents.task_agent import (
     format_tasks_for_user,
     execute_commands,
+    get_tasks,
     close,
     _fmt_due,
+    _CATEGORY_EMOJI,
 )
 from agents.memory_agent import cleanup as cleanup_history
 from agents.voice_agent import transcribe, summarize_transcript
@@ -53,6 +58,7 @@ from agents.optimization_utils import (
     extract_voice_duration_from_telegram,
     should_transcribe_voice,
     should_summarize_transcript,
+    cache_set,
 )
 from agents.scheduler_agent import start as start_scheduler
 from agents.metrics import log_stats_summary
@@ -148,6 +154,153 @@ async def _process_text(
 
 
 # ---------------------------------------------------------------------------
+# Inline-меню
+# ---------------------------------------------------------------------------
+
+_SECTION_LABELS = {
+    "goals":     "🎯 Цілі",
+    "routine":   "🔄 Рутина",
+    "other":     "📋 Прочее",
+    "reminders": "🔔 Нагадування",
+    "events":    "📅 Зустрічі",
+    "habits":    "💪 Звички",
+}
+
+_SECTION_PRIORITY = {
+    "goals":   "goal",
+    "routine": "routine",
+    "other":   "other",
+    "habits":  "habit",
+}
+
+
+def _build_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎯 Цілі",        callback_data="menu:goals"),
+            InlineKeyboardButton("🔄 Рутина",      callback_data="menu:routine"),
+            InlineKeyboardButton("📋 Прочее",      callback_data="menu:other"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Нагадування", callback_data="menu:reminders"),
+            InlineKeyboardButton("📅 Зустрічі",    callback_data="menu:events"),
+            InlineKeyboardButton("💪 Звички",      callback_data="menu:habits"),
+        ],
+    ])
+
+
+def _build_section_content(section_key: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Повернути текст і клавіатуру для конкретного розділу меню."""
+    label = _SECTION_LABELS[section_key]
+    text_lines = [label, ""]
+    buttons = []
+
+    if section_key == "reminders":
+        items = reminders_active()
+        if not items:
+            text_lines.append("Немає активних нагадувань 🎉")
+        else:
+            for item in items:
+                due_str = f"  ⏰ {_fmt_due(item['remind_at'])}" if item.get("remind_at") else ""
+                text_lines.append(f"[{item['id']}] {item['text']}{due_str}")
+                buttons.append([InlineKeyboardButton(
+                    f"✅ {item['text'][:30]}",
+                    callback_data=f"done:r:{item['id']}",
+                )])
+    else:
+        records = get_tasks(use_cache=False)
+
+        if section_key == "events":
+            items = [r for r in records if r.get("type") == "event"]
+        else:
+            priority = _SECTION_PRIORITY[section_key]
+            items = [r for r in records if r.get("type") == "task" and r.get("priority") == priority]
+
+        if not items:
+            text_lines.append("Нічого немає 🎉")
+        else:
+            for item in items:
+                due_str = f"  ⏰ {_fmt_due(item['due'])}" if item.get("due") else ""
+                streak_str = ""
+                if item.get("priority") == "habit":
+                    streak = item.get("streak", 0) or 0
+                    if streak > 0:
+                        streak_str = " " + "🟩" * min(streak, 7)
+                        if streak > 7:
+                            streak_str += f" +{streak - 7}"
+                cat_emoji = _CATEGORY_EMOJI.get(item.get("category", "other"), "📌")
+                text_lines.append(f"[{item['id']}] {cat_emoji} {item['text']}{streak_str}{due_str}")
+                buttons.append([InlineKeyboardButton(
+                    f"✅ {item['text'][:30]}",
+                    callback_data=f"done:t:{item['id']}:{section_key}",
+                )])
+
+    buttons.append([InlineKeyboardButton("← Назад", callback_data="menu:back")])
+    return "\n".join(text_lines), InlineKeyboardMarkup(buttons)
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    await update.message.reply_text(
+        "📋 Мій план — обери розділ:",
+        reply_markup=_build_menu_keyboard(),
+    )
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _MY_CHAT_ID:
+        await query.answer()
+        return
+
+    await query.answer()
+    data = query.data
+
+    # Повернутись до головного меню
+    if data == "menu:back":
+        await query.edit_message_text(
+            "📋 Мій план — обери розділ:",
+            reply_markup=_build_menu_keyboard(),
+        )
+        return
+
+    # Відкрити розділ
+    if data.startswith("menu:"):
+        section_key = data[5:]
+        if section_key in _SECTION_LABELS:
+            text, markup = _build_section_content(section_key)
+            await query.edit_message_text(text, reply_markup=markup)
+        return
+
+    # Виконати задачу / подію — done:t:{id}:{section_key}
+    if data.startswith("done:t:"):
+        parts = data.split(":")
+        try:
+            task_id = int(parts[2])
+            section_key = parts[3] if len(parts) > 3 else None
+        except (ValueError, IndexError):
+            return
+        close(task_id)
+        cache_set("tasks_ts", None)
+        if section_key and section_key in _SECTION_LABELS:
+            text, markup = _build_section_content(section_key)
+            await query.edit_message_text(text, reply_markup=markup)
+        return
+
+    # Виконати нагадування — done:r:{id}
+    if data.startswith("done:r:"):
+        try:
+            reminder_id = int(data.split(":")[2])
+        except (ValueError, IndexError):
+            return
+        reminder_mark_done(reminder_id)
+        text, markup = _build_section_content("reminders")
+        await query.edit_message_text(text, reply_markup=markup)
+        return
+
+
+# ---------------------------------------------------------------------------
 # Команди
 # ---------------------------------------------------------------------------
 
@@ -163,7 +316,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔔 Напоминання на певний час\n"
         "🎤 Розпізнавати голосові повідомлення\n\n"
         "Команди:\n"
-        "/tasks — показати всі задачі, звички, рутину і події\n"
+        "/menu — відкрити інтерактивне меню (цілі, рутина, звички…)\n"
+        "/tasks — показати всі задачі у вигляді тексту\n"
         "/reminders — показати активні напоминання\n"
         "/done <id> — закрити задачу\n"
         "/start — це повідомлення"
@@ -376,9 +530,12 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("tasks", cmd_tasks))
     app.add_handler(CommandHandler("reminders", cmd_reminders))
     app.add_handler(CommandHandler("done", cmd_done))
+
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
